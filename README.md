@@ -3,6 +3,7 @@ Asynchronous Actor Critic
 
 Requires deepmind lab
 
+
 Train model
 	from lab directory run :
 	bazel run //A3C:train --define headless=osmesa
