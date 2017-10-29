@@ -2,7 +2,7 @@
 Asynchronous Actor Critic
 
 Requires deepmind lab
-
+Place A3C folder in deepmind 'lab' folder
 
 Train model
 	from lab directory run :
