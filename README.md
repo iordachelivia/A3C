@@ -5,6 +5,8 @@ Requires deepmind lab
 
 Place A3C folder in deepmind 'lab' folder
 
+Place small_maze.lua in lab/assets/game_scripts/
+
 Train model
 	from lab directory run :
 	bazel run //A3C:train --define headless=osmesa
