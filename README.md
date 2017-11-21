@@ -3,6 +3,7 @@ Asynchronous Actor Critic
 
 # TODO
 * frames are placed into experience buffer twice?
+
     # Raycast
     * find shortest episode time for raycastmaze to converge
     # Pixelcopter
