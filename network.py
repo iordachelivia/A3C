@@ -156,10 +156,6 @@ class BaseNetwork:
             self.value_loss = 0.5 * tf.reduce_sum(tf.nn.l2_loss(
                  self.discounted_rewards - self.value))
                  
-            #self.value_loss = tf.clip_by_value(self.value_loss,
-            # clip_value_min=0.0,
-            #                                            clip_value_max=1.)
-
             #Entropy is used to diversify exploration
             #entropy = -sum(log(policy) * policy)
             # Avoid NaN with clipping when value in pi becomes zero
@@ -274,7 +270,8 @@ class BaseNetwork:
         self.reward_prediction_target = tf.placeholder(dtype=tf.float32,shape=[None,3], name='reward_prediction_target')
 
         #Clip the predicted reward
-        rp_prediction_clip = tf.clip_by_value(self.rp_prediction, 1e-20, 1.0)
+        #TODO WHY?
+        rp_prediction_clip = tf.clip_by_value(self.rp_prediction, 0.0, 1.0)
 
         #If the sigmoid gives 1 probability then log(1) = 0 so you have 0 loss
         #Multiplying by target means that you care only that you did not predict the correct one
@@ -287,9 +284,6 @@ class BaseNetwork:
         #leads to destabilizing
 
         self.rp_loss = rp_loss * self.FLAGS.rp_loss_lambda
-        #self.rp_loss = tf.clip_by_value(rp_loss, clip_value_min=-1,
-        #                           clip_value_max=2.0)
-
 
     def init_aux_task_loss_pixel_control(self):
         print('Auxiliary task pixel control only available for LSTM network')
@@ -398,6 +392,7 @@ class A3CLSTM(BaseNetwork):
 
         #Predict value
         self.vp_prediction = self.value_trunk(rnn_outputs, reuse=True)
+
 
     ''' Frame prediction network reuses the LSTM (with sampled experience)'''
     def init_aux_task_frame_prediction(self):
@@ -528,8 +523,6 @@ class A3CLSTM(BaseNetwork):
                                               self.vp_prediction))
 
         self.vp_loss = vp_loss * self.FLAGS.vp_loss_lambda
-        #self.vp_loss = tf.clip_by_value(vp_loss, clip_value_min=-1,
-        #                           clip_value_max=2.0)
 
 
     ''' Pixel control loss '''
@@ -547,8 +540,6 @@ class A3CLSTM(BaseNetwork):
         pc_loss = tf.reduce_sum(tf.nn.l2_loss(self.q_target - q_value))
 
         self.pc_loss = pc_loss * self.FLAGS.pc_loss_lambda
-        #self.pc_loss = tf.clip_by_value(pc_loss, clip_value_min=-1,
-        #                           clip_value_max=2.0)
 
 ''' Wrapper for network'''
 class NetworkWrapper:

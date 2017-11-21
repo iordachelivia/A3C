@@ -11,7 +11,21 @@ INPUT_SIZE = 84
 NO_FRAMES = 1
 GAME_NAME = 'Catcher'
 GAME_NAME='LabMaze'
+GAME_NAME='Maze'
 
+
+if GAME_NAME == 'Maze':
+    ACTION_SIZE = 4
+    NO_FRAMES = 1
+    BACKUP_STEP = 30
+    VP_LOSS_LAMBDA = 0.01
+    RP_LOSS_LAMBDA = 1
+    PC_LOSS_LAMBDA = 0.0001
+    FP_LOSS_LAMBDA = 1
+    HAS_REWARD_PREDICTION = True
+    HAS_PIXEL_CONTROL = False
+    HAS_VALUE_PREDICTION = True
+    HAS_FRAME_PREDICTION = False
 
 if GAME_NAME == 'Catcher':
     ACTION_SIZE = 3
@@ -28,21 +42,25 @@ if GAME_NAME == 'Catcher':
 
 #LAB
 if GAME_NAME == 'LabMaze':
+    IMPORT_LAB = True
     ACTION_SIZE = 6
     BACKUP_STEP = 20
     FP_LOSS_LAMBDA = 0.001
 
     #if all rp + vp + pc
+    BACKUP_STEP = 20
     RP_LOSS_LAMBDA = 1
     VP_LOSS_LAMBDA = 1
     PC_LOSS_LAMBDA = 0.001
 
     #if just rp + vp
-    RP_LOSS_LAMBDA = 1
-    VP_LOSS_LAMBDA = 0.1
-    HAS_REWARD_PREDICTION = True
+    #RP_LOSS_LAMBDA = 1
+    #VP_LOSS_LAMBDA = 0.1
+
+
+    HAS_REWARD_PREDICTION = False
     HAS_PIXEL_CONTROL = False
-    HAS_VALUE_PREDICTION = True
+    HAS_VALUE_PREDICTION = False
     HAS_FRAME_PREDICTION = False
 
 
@@ -51,7 +69,6 @@ NETWORK_TYPE = 'LSTM'
 
 GAMMA = 0.99
 BETA = 0.01
-#BETA = 0.01
 LEARNING_RATE = 7e-4
 
 EXPERIENCE_BUFFER_MAXLEN = 2000
