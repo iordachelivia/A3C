@@ -3,7 +3,10 @@ Asynchronous Actor Critic
 
 # TODO
 * frames are placed into experience buffer twice?
-* find shortest episode time for raycastmaze to converge
+    Raycast
+    * find shortest episode time for raycastmaze to converge
+    Pixelcopter
+    * add support (should be appropriate for maze equivalent)
 
 
 
