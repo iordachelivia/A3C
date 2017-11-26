@@ -1,8 +1,9 @@
-from vizdoom import *
+#from vizdoom import *
 import scipy
 import numpy as np
 from ple.games.catcher import Catcher
 from ple.games.raycastmaze import RaycastMaze
+from ple.games.pixelcopter_v2 import Pixelcopter_v2
 from ple import PLE
 #import deepmind_lab
 import random
@@ -203,6 +204,7 @@ class CatcherWrapper:
         reward = self.game.act(self.actions[action_index])
         return reward
 
+#TODO GENERIC PLE WRAPPER
 
 class RaycastMazeWrapper:
     def __init__(self, width):
@@ -225,6 +227,8 @@ class RaycastMazeWrapper:
                     @game : game instance
         '''
         p = PLE(game, display_screen=False)
+        #In some games, doing nothing is a valid action
+        #in a maze, it is not
         self.actions = p.getActionSet()[:-1]
         p.init()
         return p
@@ -262,6 +266,64 @@ class RaycastMazeWrapper:
         return reward
 
 
+class PixelcopterWrapper:
+    def __init__(self, width):
+        '''
+            @width : width of game window
+        '''
+        self.game = None
+        self.actions = None
+
+        # Maximum 1000 steps in maze
+        self.max_game_len = 300
+        self.frames_no = 0
+
+        # Create game env
+        raycast = Pixelcopter_v2(width=width, height=width)
+        self.game = self.set_maze_game_setup(raycast)
+
+    def set_maze_game_setup(self, game):
+        '''
+                    @game : game instance
+        '''
+        p = PLE(game, display_screen=False)
+        self.actions = p.getActionSet()
+        p.init()
+        return p
+
+    def restart_game(self):
+        self.game.reset_game()
+
+        #don't randomize start since  it will most likely end the game
+        #frame_skip = random.randint(0, 30)
+        # Randomize start
+        #for i in range(frame_skip):
+        #    reward = self.make_action(random.choice(range(len(self.actions))))
+
+    def get_frame(self):
+        frame = self.game.getScreenGrayscale()
+        color_frame = self.game.getScreenRGB()
+        return frame, color_frame
+
+    def process_frame(self, frame):
+        '''
+            @frame : frame to be processed
+        '''
+        # normalize
+        processed = np.reshape(frame, [np.prod(frame.shape), 1]) / 255.0
+
+        return processed
+
+    def game_finished(self):
+        return self.game.game_over()
+
+    def make_action(self, action_index):
+        '''
+            @action_index : index of action
+        '''
+        reward = self.game.act(self.actions[action_index])
+        return reward
+
 class GameWrapper:
     def __init__(self, game_name, window_width):
         '''
@@ -279,9 +341,13 @@ class GameWrapper:
         if game_name == 'Maze':
             self.game = RaycastMazeWrapper(window_width)
             self.game.name = 'Maze'
+        if game_name == 'Copter':
+            self.game = PixelcopterWrapper(window_width)
+            self.game.name = 'Copter'
         if game_name == 'LabMaze':
             self.game = LabWrapper(window_width)
             self.game.name = 'LabMaze'
+
 
     def get_game(self):
         return self.game

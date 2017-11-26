@@ -581,9 +581,9 @@ class Worker():
                 if self.name == 'thread_0':
                     sess.run(self.increment)
                     global_ep = sess.run(self.global_episodes)
-                    if global_ep == 500:
+                    if global_ep == self.FLAGS.episodes:
                         coord.request_stop()
-                    print('LOG: Global episode %d'%global_ep)
+                    print('LOG: ----------------Global episode %d'%global_ep)
                 episode_count += 1
 
                 print('LOG: Worker ' + str(self.scope) + ' episode ' + str(

@@ -472,10 +472,11 @@ class A3CLSTM(BaseNetwork):
             #TODO
             padding_type ='VALID'
             if padding_type == 'VALID':
-                out_height = (fc_pc.shape[1].value - 1) * 2 + W_deconv_value.shape[0].value
-                out_width = (fc_pc.shape[2].value - 1) * 2 + W_deconv_value.shape[1].value
+                out_height = (fc_pc.shape[1].value - 1) * 2 + \
+                             W_deconv_value.get_shape()[0].value
+                out_width = (fc_pc.shape[2].value - 1) * 2 + W_deconv_value.get_shape()[1].value
                 out_shape = [tf.shape(fc_pc)[0], out_height, out_width,
-                             W_deconv_value.shape[
+                             W_deconv_value.get_shape()[
                     2].value]
             pc_value_deconv = tf.nn.conv2d_transpose(fc_pc,filter=W_deconv_value,
                                                      output_shape=out_shape,strides=[1,2,2,1],padding='VALID')
@@ -489,10 +490,10 @@ class A3CLSTM(BaseNetwork):
             # TODO
             padding_type = 'VALID'
             if padding_type == 'VALID':
-                out_height = (fc_pc.shape[1].value - 1) * 2 + W_deconv_advantage.shape[0].value
-                out_width = (fc_pc.shape[2].value - 1) * 2 + W_deconv_advantage.shape[1].value
+                out_height = (fc_pc.shape[1].value - 1) * 2 + W_deconv_advantage.get_shape()[0].value
+                out_width = (fc_pc.shape[2].value - 1) * 2 + W_deconv_advantage.get_shape()[1].value
                 out_shape = [tf.shape(fc_pc)[0], out_height, out_width,
-                             W_deconv_advantage.shape[2].value]
+                             W_deconv_advantage.get_shape()[2].value]
             pc_advantage_deconv = tf.nn.conv2d_transpose(fc_pc, filter=W_deconv_advantage,
                                                      output_shape=out_shape, strides=[1, 2, 2, 1],
                                                      padding='VALID')
