@@ -3,14 +3,9 @@ Asynchronous Actor Critic
 
 # TODO
 * frames are placed into experience buffer twice?
-
-    # Raycast
-    * find shortest episode time for raycastmaze to converge
-    # Pixelcopter
-    * add support (should be appropriate for maze equivalent)
-
-
-
+* FP(Frame prediction)
+* Trajectory(to see optimality of exploration)
+* Lab maze bigger exploration beta
 
 
 Requires deepmind lab

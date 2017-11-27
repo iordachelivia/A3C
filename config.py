@@ -35,10 +35,11 @@ NO_AUX = 0
 RP = 1
 VP = 2
 PC = 3
-RP_VP = 4
-RP_VP_PC = 5
+FP = 4
+RP_VP = 5
+RP_VP_PC = 6
 
-CONFIG = RP_VP_PC
+CONFIG = FP
 
 if GAME_NAME == 'Copter':
     ACTION_SIZE = 3
@@ -60,6 +61,11 @@ if GAME_NAME == 'Copter':
     if CONFIG == PC:
         HAS_PIXEL_CONTROL = True
         PC_LOSS_LAMBDA = 0.00005
+
+    if CONFIG == FP:
+        HAS_FRAME_PREDICTION = True
+        #-+FP_LOSS_LAMBDA = 0.0001
+        #FP_LOSS_LAMBDA = 0.000001
 
     if CONFIG == RP_VP:
         HAS_REWARD_PREDICTION = True

@@ -179,6 +179,29 @@ class Worker():
         return [frames, discounted_values], params, feed_dict_aux
 
     ''' Do not skew distribution
+                Sample BACKUP_STEP consecutive observations
+        '''
+
+    def get_auxiliary_tasks_input_frame_prediction(self, experience_replay,
+                                                session):
+        index = np.random.randint(0,
+                                  len(experience_replay) - self.backup_step - 1)
+        sequence = experience_replay[index: index + self.backup_step]
+        sequence_target = experience_replay[index + 1: index +
+                                                       self.backup_step + 1]
+        # observation = [frame, selected_action, reward, new_frame, value]
+        # Get frames
+        frames = [x[0] for x in sequence]
+        frames_target = [x[0] for x in sequence_target]
+
+        feed_dict_aux = {self.network.previous_observations_fp: frames,
+                         self.network.fp_previous_frames_target: frames_target}
+        params = [self.network.fp_loss]
+
+        return [frames], params, feed_dict_aux
+
+
+    ''' Do not skew distribution
         Sample BACKUP_STEP consecutive observations
     '''
     def get_auxiliary_tasks_input_value_prediction(self, experience_replay, session):
@@ -210,6 +233,8 @@ class Worker():
         params = []
         feed_dict = {}
 
+        #TODO DO NOT MODIFY ORDER!!!
+        #IN FUNCTION BACK IT UP
         if self.FLAGS.has_reward_prediction :
             input_data_aux, params_aux, feed_dict_aux = \
                 self.get_auxiliary_tasks_input_reward_prediction(experience_replay)
@@ -226,6 +251,13 @@ class Worker():
         if self.FLAGS.has_value_prediction :
             input_data_aux, params_aux, feed_dict_aux = \
                 self.get_auxiliary_tasks_input_value_prediction(experience_replay, session)
+            input_data.extend(input_data_aux)
+            params.extend(params_aux)
+            feed_dict.update(feed_dict_aux)
+        if self.FLAGS.has_frame_prediction :
+            input_data_aux, params_aux, feed_dict_aux = \
+                self.get_auxiliary_tasks_input_frame_prediction(experience_replay,
+                                                       session)
             input_data.extend(input_data_aux)
             params.extend(params_aux)
             feed_dict.update(feed_dict_aux)
@@ -291,6 +323,7 @@ class Worker():
         reward_prediction_loss = None
         pixel_control_loss = None
         value_prediction_loss = None
+        frame_prediction_loss = None
 
         if self.FLAGS.has_reward_prediction:
             reward_prediction_loss = results[start_index] /len(rollout)
@@ -300,13 +333,18 @@ class Worker():
             start_index += 1
         if self.FLAGS.has_value_prediction:
             value_prediction_loss = results[start_index] /len(rollout)
+            start_index += 1
+        if self.FLAGS.has_frame_prediction:
+            frame_prediction_loss = results[start_index]/len(rollout)
 
+        #network loss
         total_loss = results[-1] /len(rollout)
 
         # Save values to plot later
         values_to_plot = [value_loss / len(rollout), policy_loss / len(rollout), entropy / len(rollout),
                                clipped_grad_norm, reward_prediction_loss,
-                          pixel_control_loss, value_prediction_loss, total_loss]
+                          pixel_control_loss, value_prediction_loss,
+                          frame_prediction_loss, total_loss]
 
         return values_to_plot
 
@@ -339,7 +377,7 @@ class Worker():
 
         #Extract losses
         [value_loss, policy_loss, entropy, clipped_grad_norm, rp_loss,
-         pc_loss, vp_loss, total_loss] = losses
+         pc_loss, vp_loss, fp_loss, total_loss] = losses
 
         #Create gifs from frames
 
@@ -373,6 +411,9 @@ class Worker():
         if vp_loss != None:
             summary.value.add(tag='Losses/AuxLosses/Value Prediction',
                               simple_value=float(vp_loss))
+        if fp_loss != None:
+            summary.value.add(tag='Losses/AuxLosses/Frame Prediction',
+                              simple_value=float(fp_loss))
 
         self.summary_writer.add_summary(summary, episode_count)
         self.summary_writer.flush()
@@ -397,7 +438,7 @@ class Worker():
         episode_reward = 0
         episode_rewards_list = []
         episode_step_count = 0
-        toplot = [0, 0, 0, 0, None, None, None, 0]
+        toplot = [0, 0, 0, 0, None, None, None, None, 0]
         # Clean slate for each episode
         self.game.restart_game()
         rnn_state = None
@@ -468,6 +509,7 @@ class Worker():
 
             #While the experience buffer gets full, do not update
             if len(experience_replay) < self.FLAGS.experience_buffer_maxlen:
+                print('LOG : ****** Filling experience replay buffer')
                 continue
 
             # If the episode hasn't ended, but the experience buffer is full, then we
