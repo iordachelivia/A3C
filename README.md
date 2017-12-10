@@ -3,9 +3,13 @@ Asynchronous Actor Critic
 
 # TODO
 * frames are placed into experience buffer twice?
-* FP(Frame prediction)
+* for fp save reconstructed images
+
 * Trajectory(to see optimality of exploration)
-* Lab maze bigger exploration beta
+    * catcher done
+    * copter
+    * maze (have to modify source code to get position)
+* Lab maze bigger exploration beta to try
 
 
 Requires deepmind lab

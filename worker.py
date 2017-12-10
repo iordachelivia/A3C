@@ -388,6 +388,12 @@ class Worker():
                 make_gif(images, self.frames_path+'/image' + str(episode_count) + '.avi',
                          duration=len(images) * time_per_step, true_image=True, salience=False)
 
+                #save visitation map
+                visitation_map = self.game.construct_visitation_map()
+                if visitation_map != None:
+                    visitation_map.save(self.frames_path+'/visitation_map_' + str(
+                        episode_count) + '.png')
+
         #Save model at each 250 episodes
         if episode_count % 25 == 0 and self.name == 'thread_0':
             saver.save(session, self.model_path + '/model-' + str(episode_count) + '.cptk')
@@ -509,7 +515,7 @@ class Worker():
 
             #While the experience buffer gets full, do not update
             if len(experience_replay) < self.FLAGS.experience_buffer_maxlen:
-                print('LOG : ****** Filling experience replay buffer')
+                print('LOG : %s ****** Filling experience replay buffer'%self.scope)
                 continue
 
             # If the episode hasn't ended, but the experience buffer is full, then we

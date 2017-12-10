@@ -5,7 +5,8 @@ from ple.games.catcher import Catcher
 from ple.games.raycastmaze import RaycastMaze
 from ple.games.pixelcopter_v2 import Pixelcopter_v2
 from ple import PLE
-#import deepmind_lab
+from PIL import Image
+import deepmind_lab
 import random
 import cv2
 seed = 147
@@ -26,6 +27,10 @@ class LabWrapper:
         self.game = self.set_lab_game_setup()
         # Reset game
         self.restart_game()
+
+    def construct_visitation_map(self):
+        return None
+
     def _action(self,*entries):
         return np.array(entries, dtype=np.intc)
 
@@ -159,14 +164,18 @@ class DoomWrapper:
 ''' PLE Catcher game '''
 
 class CatcherWrapper:
-    def __init__(self, width, lives = 6):
+    def __init__(self, width, lives = 1):
         '''
             @width : width of game window
             @lives : number of deaths before the episode terminates (death = pallet does not catch ball)
         '''
+        self.width = width
         self.game = None
         self.actions = None
-        self.max_game_len = 1000
+        self.max_game_len = 150
+        self.visitation_map = {}
+        self.timer = 0
+        self.coordinates = (0, 0)
 
         # Create game env
         catcher = Catcher(width=width, height=width,init_lives=lives)
@@ -180,12 +189,18 @@ class CatcherWrapper:
         return p
 
     def restart_game(self):
+        self.visitation_map = {}
+        self.timer = 0
+        self.coordinates = (0, 0)
         self.game.reset_game()
         frame_skip = random.randint(0,30)
 
         #Randomize start
         for i in range(frame_skip):
             reward = self.make_action(random.choice(range(len(self.actions))))
+
+        self.coordinates = (self.game.game.getGameState()['player_x'],
+                            10)
 
     def get_frame(self):
         frame = self.game.getScreenGrayscale()
@@ -202,7 +217,44 @@ class CatcherWrapper:
 
     def make_action(self, action_index):
         reward = self.game.act(self.actions[action_index])
+
+        #update visitation map
+        self.coordinates = (self.game.game.getGameState()['player_x'],
+                            10)
+
+        self.visitation_map[self.timer] = self.coordinates
+        self.timer += 1
+
         return reward
+
+    def construct_visitation_map(self):
+        image = np.uint8(np.zeros((11,self.width, 4)))
+        image = Image.fromarray(image)
+        image = image.convert("RGBA")
+        pixels = image.load()
+        opacity = 100
+        increase = 20
+
+
+        for timestep in self.visitation_map:
+            coordinate = self.visitation_map[timestep]
+            if pixels[coordinate[0], coordinate[1]] == (0,0,0,0):
+                pixels[coordinate[0],coordinate[1]] = (255,0,0, int(opacity))
+            else:
+                value = tuple(sum(x) for x in zip(pixels[coordinate[0],
+                                                         coordinate[1]],
+                                                  (0, 0, 0, int(increase))))
+                pixels[coordinate[0], coordinate[1]] = value
+
+        #mark start and end positions
+        coordinate = self.visitation_map[0]
+        pixels[coordinate[0], coordinate[1]/2] = (0,255,0,255)
+        pixels[coordinate[0], coordinate[1]/2 - 1] = (0, 255, 0, 255)
+        coordinate = self.visitation_map[len(self.visitation_map) - 1]
+        # rewrite coordinate
+        pixels[coordinate[0], coordinate[1]/2] = (0, 0, 255, 255)
+
+        return image
 
 #TODO GENERIC PLE WRAPPER
 
@@ -281,6 +333,9 @@ class PixelcopterWrapper:
         # Create game env
         raycast = Pixelcopter_v2(width=width, height=width)
         self.game = self.set_maze_game_setup(raycast)
+
+    def construct_visitation_map(self):
+        return  None
 
     def set_maze_game_setup(self, game):
         '''

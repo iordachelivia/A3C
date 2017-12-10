@@ -19,16 +19,16 @@ PC_LOSS_LAMBDA = 0.0001
 FP_LOSS_LAMBDA = 1
 
 # DEEPMIND LABYRINTH
-# GAME_NAME = 'LabMaze'
+GAME_NAME = 'LabMaze'
 
 # PLE CATCHER
-# GAME_NAME = 'Catcher'
+#GAME_NAME = 'Catcher'
 
 # PLE RAYCASTMAZE
 # GAME_NAME = 'Maze'
 
 # PLE PIXELCOPTER
-GAME_NAME = 'Copter'
+#GAME_NAME = 'Copter'
 
 # Tasks
 NO_AUX = 0
@@ -39,16 +39,13 @@ FP = 4
 RP_VP = 5
 RP_VP_PC = 6
 
-CONFIG = FP
+CONFIG = RP_VP
 
 if GAME_NAME == 'Copter':
     ACTION_SIZE = 3
     BACKUP_STEP = 20
     EPISODES = 1000
     BETA = 1
-
-    if CONFIG == NO_AUX:
-        BETA = 1
 
     if CONFIG == RP:
         HAS_REWARD_PREDICTION = True
@@ -97,17 +94,43 @@ if GAME_NAME == 'Maze':
     HAS_FRAME_PREDICTION = False
 
 if GAME_NAME == 'Catcher':
+    #TODO CATCHER CONFIG
     ACTION_SIZE = 3
     NO_FRAMES = 1
     BACKUP_STEP = 30
-    VP_LOSS_LAMBDA = 0.01
-    RP_LOSS_LAMBDA = 1
-    PC_LOSS_LAMBDA = 0.0001
-    FP_LOSS_LAMBDA = 1
-    HAS_REWARD_PREDICTION = True
-    HAS_PIXEL_CONTROL = False
-    HAS_VALUE_PREDICTION = True
-    HAS_FRAME_PREDICTION = False
+    EPISODES = 1000
+    BETA = 0.01
+
+    if CONFIG == RP:
+        HAS_REWARD_PREDICTION = True
+        RP_LOSS_LAMBDA = 0.01
+
+    if CONFIG == VP:
+        HAS_VALUE_PREDICTION = True
+        VP_LOSS_LAMBDA = 0.001
+
+    if CONFIG == PC:
+        HAS_PIXEL_CONTROL = True
+        PC_LOSS_LAMBDA = 0.00001
+
+    if CONFIG == FP:
+        HAS_FRAME_PREDICTION = True
+        FP_LOSS_LAMBDA = 0.0001
+
+    if CONFIG == RP_VP:
+        HAS_REWARD_PREDICTION = True
+        HAS_VALUE_PREDICTION = True
+        VP_LOSS_LAMBDA = 0.01
+        RP_LOSS_LAMBDA = 0.01
+
+    if CONFIG == RP_VP_PC:
+        HAS_REWARD_PREDICTION = True
+        HAS_VALUE_PREDICTION = True
+        HAS_PIXEL_CONTROL = True
+        VP_LOSS_LAMBDA = 0.01
+        RP_LOSS_LAMBDA = 0.01
+        PC_LOSS_LAMBDA = 0.00001
+
 
 #LAB
 if GAME_NAME == 'LabMaze':
@@ -115,20 +138,52 @@ if GAME_NAME == 'LabMaze':
     ACTION_SIZE = 6
     BACKUP_STEP = 20
 
-    if CONFIG == RP_VP_PC:
+    if CONFIG == NO_AUX:
+        BETA = 1
+
+    if CONFIG == RP:
+        BETA = 1# best so far
         HAS_REWARD_PREDICTION = True
-        HAS_PIXEL_CONTROL = True
-        HAS_VALUE_PREDICTION = True
-        BACKUP_STEP = 20
         RP_LOSS_LAMBDA = 1
-        VP_LOSS_LAMBDA = 1
-        PC_LOSS_LAMBDA = 0.001
+
+    if CONFIG == VP:
+        BETA = 1
+        HAS_VALUE_PREDICTION = True
+        VP_LOSS_LAMBDA = 0.1
+
+        # BETA = 0.01
+        # VP = 0.1 fail
+
+    if CONFIG == PC:
+        BETA = 1
+        HAS_PIXEL_CONTROL = True
+        PC_LOSS_LAMBDA = 0.001#fail
+        PC_LOSS_LAMBDA = 0.01#fail
+        PC_LOSS_LAMBDA = 0.0001  # fail
+
+        #is that its limit?
 
     if CONFIG == RP_VP:
         HAS_REWARD_PREDICTION = True
         HAS_VALUE_PREDICTION = True
+        BETA = 0.01
         RP_LOSS_LAMBDA = 1
         VP_LOSS_LAMBDA = 0.1
+
+        BETA = 1
+        RP_LOSS_LAMBDA = 1
+        VP_LOSS_LAMBDA = 0.1
+
+    if CONFIG == RP_VP_PC:
+        HAS_REWARD_PREDICTION = True
+        HAS_PIXEL_CONTROL = True
+        HAS_VALUE_PREDICTION = True
+        BETA = 0.01
+        RP_LOSS_LAMBDA = 1
+        VP_LOSS_LAMBDA = 1
+        PC_LOSS_LAMBDA = 0.001
+
+
 
 
 parser = argparse.ArgumentParser()
