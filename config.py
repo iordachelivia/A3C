@@ -39,7 +39,7 @@ FP = 4
 RP_VP = 5
 RP_VP_PC = 6
 
-CONFIG = RP_VP
+CONFIG = FP
 
 if GAME_NAME == 'Copter':
     ACTION_SIZE = 3
@@ -137,42 +137,33 @@ if GAME_NAME == 'LabMaze':
     IMPORT_LAB = True
     ACTION_SIZE = 6
     BACKUP_STEP = 20
+    BETA = 1
 
     if CONFIG == NO_AUX:
         BETA = 1
 
     if CONFIG == RP:
-        BETA = 1# best so far
         HAS_REWARD_PREDICTION = True
         RP_LOSS_LAMBDA = 1
 
     if CONFIG == VP:
-        BETA = 1
         HAS_VALUE_PREDICTION = True
         VP_LOSS_LAMBDA = 0.1
 
-        # BETA = 0.01
-        # VP = 0.1 fail
-
     if CONFIG == PC:
-        BETA = 1
         HAS_PIXEL_CONTROL = True
-        PC_LOSS_LAMBDA = 0.001#fail
-        PC_LOSS_LAMBDA = 0.01#fail
-        PC_LOSS_LAMBDA = 0.0001  # fail
+        PC_LOSS_LAMBDA = 0.0001 # not good enough
 
-        #is that its limit?
+    if CONFIG == FP:
+        HAS_FRAME_PREDICTION = True
+        FP_LOSS_LAMBDA = 0.0001
 
     if CONFIG == RP_VP:
         HAS_REWARD_PREDICTION = True
         HAS_VALUE_PREDICTION = True
-        BETA = 0.01
-        RP_LOSS_LAMBDA = 1
         VP_LOSS_LAMBDA = 0.1
+        RP_LOSS_LAMBDA = 0.1
 
-        BETA = 1
-        RP_LOSS_LAMBDA = 1
-        VP_LOSS_LAMBDA = 0.1
 
     if CONFIG == RP_VP_PC:
         HAS_REWARD_PREDICTION = True
