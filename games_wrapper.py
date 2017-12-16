@@ -1,11 +1,13 @@
-from vizdoom import *
+#from vizdoom import *
 import scipy
 import numpy as np
 from ple.games.catcher import Catcher
+from ple.games.raycastmaze import RaycastMaze
+from ple.games.pixelcopter_v2 import Pixelcopter_v2
 from ple import PLE
-import random
-#import gym
+from PIL import Image
 import deepmind_lab
+import random
 import cv2
 seed = 147
 random.seed(seed)
@@ -25,6 +27,10 @@ class LabWrapper:
         self.game = self.set_lab_game_setup()
         # Reset game
         self.restart_game()
+
+    def construct_visitation_map(self):
+        return None
+
     def _action(self,*entries):
         return np.array(entries, dtype=np.intc)
 
@@ -158,14 +164,18 @@ class DoomWrapper:
 ''' PLE Catcher game '''
 
 class CatcherWrapper:
-    def __init__(self, width, lives = 6):
+    def __init__(self, width, lives = 1):
         '''
             @width : width of game window
             @lives : number of deaths before the episode terminates (death = pallet does not catch ball)
         '''
+        self.width = width
         self.game = None
         self.actions = None
-        self.max_game_len = 1000
+        self.max_game_len = 150
+        self.visitation_map = {}
+        self.timer = 0
+        self.coordinates = (0, 0)
 
         # Create game env
         catcher = Catcher(width=width, height=width,init_lives=lives)
@@ -179,12 +189,18 @@ class CatcherWrapper:
         return p
 
     def restart_game(self):
+        self.visitation_map = {}
+        self.timer = 0
+        self.coordinates = (0, 0)
         self.game.reset_game()
         frame_skip = random.randint(0,30)
 
         #Randomize start
         for i in range(frame_skip):
             reward = self.make_action(random.choice(range(len(self.actions))))
+
+        self.coordinates = (self.game.game.getGameState()['player_x'],
+                            10)
 
     def get_frame(self):
         frame = self.game.getScreenGrayscale()
@@ -201,8 +217,167 @@ class CatcherWrapper:
 
     def make_action(self, action_index):
         reward = self.game.act(self.actions[action_index])
+
+        #update visitation map
+        self.coordinates = (self.game.game.getGameState()['player_x'],
+                            10)
+
+        self.visitation_map[self.timer] = self.coordinates
+        self.timer += 1
+
         return reward
 
+    def construct_visitation_map(self):
+        image = np.uint8(np.zeros((11,self.width, 4)))
+        image = Image.fromarray(image)
+        image = image.convert("RGBA")
+        pixels = image.load()
+        opacity = 100
+        increase = 20
+
+
+        for timestep in self.visitation_map:
+            coordinate = self.visitation_map[timestep]
+            if pixels[coordinate[0], coordinate[1]] == (0,0,0,0):
+                pixels[coordinate[0],coordinate[1]] = (255,0,0, int(opacity))
+            else:
+                value = tuple(sum(x) for x in zip(pixels[coordinate[0],
+                                                         coordinate[1]],
+                                                  (0, 0, 0, int(increase))))
+                pixels[coordinate[0], coordinate[1]] = value
+
+        #mark start and end positions
+        coordinate = self.visitation_map[0]
+        pixels[coordinate[0], coordinate[1]/2] = (0,255,0,255)
+        pixels[coordinate[0], coordinate[1]/2 - 1] = (0, 255, 0, 255)
+        coordinate = self.visitation_map[len(self.visitation_map) - 1]
+        # rewrite coordinate
+        pixels[coordinate[0], coordinate[1]/2] = (0, 0, 255, 255)
+
+        return image
+
+#TODO GENERIC PLE WRAPPER
+
+class RaycastMazeWrapper:
+    def __init__(self, width):
+        '''
+            @width : width of game window
+        '''
+        self.game = None
+        self.actions = None
+
+        # Maximum 1000 steps in maze
+        self.max_game_len = 500
+        self.frames_no = 0
+
+        # Create game env
+        raycast = RaycastMaze(width=width, height=width, map_size=6)
+        self.game = self.set_maze_game_setup(raycast)
+
+    def set_maze_game_setup(self, game):
+        '''
+                    @game : game instance
+        '''
+        p = PLE(game, display_screen=False)
+        #In some games, doing nothing is a valid action
+        #in a maze, it is not
+        self.actions = p.getActionSet()[:-1]
+        p.init()
+        return p
+
+    def restart_game(self):
+        self.game.reset_game()
+        frame_skip = random.randint(0, 30)
+
+        # Randomize start
+        for i in range(frame_skip):
+            reward = self.make_action(random.choice(range(len(self.actions))))
+
+    def get_frame(self):
+        frame = self.game.getScreenGrayscale()
+        color_frame = self.game.getScreenRGB()
+        return frame, color_frame
+
+    def process_frame(self, frame):
+        '''
+            @frame : frame to be processed
+        '''
+        # normalize
+        processed = np.reshape(frame, [np.prod(frame.shape), 1]) / 255.0
+
+        return processed
+
+    def game_finished(self):
+        return self.game.game_over()
+
+    def make_action(self, action_index):
+        '''
+            @action_index : index of action
+        '''
+        reward = self.game.act(self.actions[action_index])
+        return reward
+
+
+class PixelcopterWrapper:
+    def __init__(self, width):
+        '''
+            @width : width of game window
+        '''
+        self.game = None
+        self.actions = None
+
+        # Maximum 1000 steps in maze
+        self.max_game_len = 300
+        self.frames_no = 0
+
+        # Create game env
+        raycast = Pixelcopter_v2(width=width, height=width)
+        self.game = self.set_maze_game_setup(raycast)
+
+    def construct_visitation_map(self):
+        return  None
+
+    def set_maze_game_setup(self, game):
+        '''
+                    @game : game instance
+        '''
+        p = PLE(game, display_screen=False)
+        self.actions = p.getActionSet()
+        p.init()
+        return p
+
+    def restart_game(self):
+        self.game.reset_game()
+
+        #don't randomize start since  it will most likely end the game
+        #frame_skip = random.randint(0, 30)
+        # Randomize start
+        #for i in range(frame_skip):
+        #    reward = self.make_action(random.choice(range(len(self.actions))))
+
+    def get_frame(self):
+        frame = self.game.getScreenGrayscale()
+        color_frame = self.game.getScreenRGB()
+        return frame, color_frame
+
+    def process_frame(self, frame):
+        '''
+            @frame : frame to be processed
+        '''
+        # normalize
+        processed = np.reshape(frame, [np.prod(frame.shape), 1]) / 255.0
+
+        return processed
+
+    def game_finished(self):
+        return self.game.game_over()
+
+    def make_action(self, action_index):
+        '''
+            @action_index : index of action
+        '''
+        reward = self.game.act(self.actions[action_index])
+        return reward
 
 class GameWrapper:
     def __init__(self, game_name, window_width):
@@ -218,9 +393,16 @@ class GameWrapper:
         if game_name == 'Catcher':
             self.game = CatcherWrapper(window_width)
             self.game.name = 'Catcher'
+        if game_name == 'Maze':
+            self.game = RaycastMazeWrapper(window_width)
+            self.game.name = 'Maze'
+        if game_name == 'Copter':
+            self.game = PixelcopterWrapper(window_width)
+            self.game.name = 'Copter'
         if game_name == 'LabMaze':
             self.game = LabWrapper(window_width)
             self.game.name = 'LabMaze'
+
 
     def get_game(self):
         return self.game

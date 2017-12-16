@@ -156,10 +156,6 @@ class BaseNetwork:
             self.value_loss = 0.5 * tf.reduce_sum(tf.nn.l2_loss(
                  self.discounted_rewards - self.value))
                  
-            #self.value_loss = tf.clip_by_value(self.value_loss,
-            # clip_value_min=0.0,
-            #                                            clip_value_max=1.)
-
             #Entropy is used to diversify exploration
             #entropy = -sum(log(policy) * policy)
             # Avoid NaN with clipping when value in pi becomes zero
@@ -228,7 +224,9 @@ class BaseNetwork:
         if FLAGS.has_value_prediction :
             self.init_aux_task_loss_value_prediction()
             self.loss = self.loss + self.vp_loss
-
+        if FLAGS.has_frame_prediction :
+            self.init_aux_task_loss_frame_prediction()
+            self.loss = self.loss + self.fp_loss
     ''' Reward prediction network
         Branches of the last conv layer into an 128 FC -> 3 FC -> Softmax'''
     def init_aux_task_reward_prediction(self):
@@ -274,7 +272,8 @@ class BaseNetwork:
         self.reward_prediction_target = tf.placeholder(dtype=tf.float32,shape=[None,3], name='reward_prediction_target')
 
         #Clip the predicted reward
-        rp_prediction_clip = tf.clip_by_value(self.rp_prediction, 1e-20, 1.0)
+        #TODO WHY?
+        rp_prediction_clip = tf.clip_by_value(self.rp_prediction, 0.0, 1.0)
 
         #If the sigmoid gives 1 probability then log(1) = 0 so you have 0 loss
         #Multiplying by target means that you care only that you did not predict the correct one
@@ -287,9 +286,6 @@ class BaseNetwork:
         #leads to destabilizing
 
         self.rp_loss = rp_loss * self.FLAGS.rp_loss_lambda
-        #self.rp_loss = tf.clip_by_value(rp_loss, clip_value_min=-1,
-        #                           clip_value_max=2.0)
-
 
     def init_aux_task_loss_pixel_control(self):
         print('Auxiliary task pixel control only available for LSTM network')
@@ -399,11 +395,13 @@ class A3CLSTM(BaseNetwork):
         #Predict value
         self.vp_prediction = self.value_trunk(rnn_outputs, reuse=True)
 
+
     ''' Frame prediction network reuses the LSTM (with sampled experience)'''
     def init_aux_task_frame_prediction(self):
         with tf.device(self.device), tf.variable_scope(self.scope) as scope:
             self.previous_observations_fp = tf.placeholder(
-                shape=[None, self.input_size * self.input_size, self.no_frames],
+                shape=[None, self.input_size * self.input_size,
+                       self.no_frames],
                 dtype=tf.float32, name='previous_observations_fp')
 
             # Reshape to be a 4d tensor
@@ -430,7 +428,59 @@ class A3CLSTM(BaseNetwork):
         rnn_outputs = tf.reshape(rnn_outputs, [-1, 256])
 
         with tf.device(self.device), tf.variable_scope(self.scope) as scope:
-            print(rnn_outputs.shape)
+            # Map lstm output to 9x9x32 to reconstruct the cnn trunk output
+            shape = [256, 9 * 9 * 32]
+            W_fc_fp1, b_fc_fp1 = self.init_weights_and_biases("W_fc_fp1", shape)
+            fc_fp = tf.nn.relu(tf.matmul(rnn_outputs, W_fc_fp1) + b_fc_fp1)
+            fc_fp = tf.reshape(fc_fp, [-1, 9, 9, 32])
+
+            # Deconv layer map to 20x20x16
+            shape = [4, 4, 16, 32]
+            W_deconv_fp1, b_deconv_fp1 = self.init_weights_and_biases(
+                "W_deconv_fp1", shape)
+
+            # TODO
+            padding_type = 'VALID'
+            if padding_type == 'VALID':
+                out_height = (fc_fp.shape[1].value - 1) * 2 + \
+                             W_deconv_fp1.get_shape()[0].value
+                out_width = (fc_fp.shape[2].value - 1) * 2 + \
+                            W_deconv_fp1.get_shape()[1].value
+                out_shape = [tf.shape(fc_fp)[0], out_height, out_width,
+                             W_deconv_fp1.get_shape()[
+                                 2].value]
+            fp_deconv1 = tf.nn.conv2d_transpose(fc_fp,
+                                                     filter=W_deconv_fp1,
+                                                     output_shape=out_shape,
+                                                     strides=[1, 2, 2, 1],
+                                                     padding='VALID')
+
+            # 20x20x16
+            fp_deconv1 = tf.nn.relu(fp_deconv1 + b_deconv_fp1)
+
+            # Deconv layer map to 84x84x1
+            shape = [8, 8, self.no_frames, 16]
+            W_deconv_fp2, b_deconv_fp2 = self.init_weights_and_biases(
+                "W_deconv_fp2", shape)
+
+            # TODO
+            padding_type = 'VALID'
+            if padding_type == 'VALID':
+                out_height = (out_height - 1) * 4 + \
+                             W_deconv_fp2.get_shape()[0].value
+                out_width = (out_width - 1) * 4 + \
+                            W_deconv_fp2.get_shape()[1].value
+                out_shape = [tf.shape(fp_deconv1)[0], out_height, out_width,
+                             W_deconv_fp2.get_shape()[
+                                 2].value]
+            fp_deconv2 = tf.nn.conv2d_transpose(fp_deconv1,
+                                                filter=W_deconv_fp2,
+                                                output_shape=out_shape,
+                                                strides=[1, 4, 4, 1],
+                                                padding='VALID')
+
+            # 84,84,1
+            self.fp_reconstruction = tf.nn.relu(fp_deconv2 + b_deconv_fp2)
 
     ''' Pixel control network reuses the LSTM and value prediction
             (with sampled experience)'''
@@ -463,7 +513,7 @@ class A3CLSTM(BaseNetwork):
         rnn_outputs = tf.reshape(rnn_outputs, [-1, 256])
 
         with tf.device(self.device), tf.variable_scope(self.scope) as scope:
-            # Map lstm output to 7x7x32
+            # Map lstm output to 9x9x32 to reconstruct cnn trunk output
             shape = [256, 9 * 9 * 32]
             W_fc_pc1, b_fc_pc1 = self.init_weights_and_biases("W_fc_pc1", shape)
             fc_pc = tf.nn.relu(tf.matmul(rnn_outputs, W_fc_pc1) + b_fc_pc1)
@@ -477,10 +527,11 @@ class A3CLSTM(BaseNetwork):
             #TODO
             padding_type ='VALID'
             if padding_type == 'VALID':
-                out_height = (fc_pc.shape[1].value - 1) * 2 + W_deconv_value.shape[0].value
-                out_width = (fc_pc.shape[2].value - 1) * 2 + W_deconv_value.shape[1].value
+                out_height = (fc_pc.shape[1].value - 1) * 2 + \
+                             W_deconv_value.get_shape()[0].value
+                out_width = (fc_pc.shape[2].value - 1) * 2 + W_deconv_value.get_shape()[1].value
                 out_shape = [tf.shape(fc_pc)[0], out_height, out_width,
-                             W_deconv_value.shape[
+                             W_deconv_value.get_shape()[
                     2].value]
             pc_value_deconv = tf.nn.conv2d_transpose(fc_pc,filter=W_deconv_value,
                                                      output_shape=out_shape,strides=[1,2,2,1],padding='VALID')
@@ -494,10 +545,10 @@ class A3CLSTM(BaseNetwork):
             # TODO
             padding_type = 'VALID'
             if padding_type == 'VALID':
-                out_height = (fc_pc.shape[1].value - 1) * 2 + W_deconv_advantage.shape[0].value
-                out_width = (fc_pc.shape[2].value - 1) * 2 + W_deconv_advantage.shape[1].value
+                out_height = (fc_pc.shape[1].value - 1) * 2 + W_deconv_advantage.get_shape()[0].value
+                out_width = (fc_pc.shape[2].value - 1) * 2 + W_deconv_advantage.get_shape()[1].value
                 out_shape = [tf.shape(fc_pc)[0], out_height, out_width,
-                             W_deconv_advantage.shape[2].value]
+                             W_deconv_advantage.get_shape()[2].value]
             pc_advantage_deconv = tf.nn.conv2d_transpose(fc_pc, filter=W_deconv_advantage,
                                                      output_shape=out_shape, strides=[1, 2, 2, 1],
                                                      padding='VALID')
@@ -528,9 +579,26 @@ class A3CLSTM(BaseNetwork):
                                               self.vp_prediction))
 
         self.vp_loss = vp_loss * self.FLAGS.vp_loss_lambda
-        #self.vp_loss = tf.clip_by_value(vp_loss, clip_value_min=-1,
-        #                           clip_value_max=2.0)
 
+    ''' Pixel control loss '''
+
+    def init_aux_task_loss_frame_prediction(self):
+        self.fp_previous_frames_target = tf.placeholder(dtype=tf.float32,
+                                               shape=[None, self.input_size *
+                                                      self.input_size,
+                                                      self.no_frames])
+        fp_previous_frames_target_reshaped = tf.reshape(self.fp_previous_frames_target,
+                                       shape=[-1, self.input_size,
+                                              self.input_size, self.no_frames]
+                                       ,
+                                       name='fp_previous_frames_target_reshaped')
+
+        # Log because the loss is very high
+        # fp_loss = tf.reduce_sum(np.square(self.q_target - q_value))
+        fp_loss = tf.reduce_sum(tf.nn.l2_loss(fp_previous_frames_target_reshaped -
+                                              self.fp_reconstruction))
+
+        self.fp_loss = fp_loss * self.FLAGS.fp_loss_lambda
 
     ''' Pixel control loss '''
     def init_aux_task_loss_pixel_control(self):
@@ -547,8 +615,6 @@ class A3CLSTM(BaseNetwork):
         pc_loss = tf.reduce_sum(tf.nn.l2_loss(self.q_target - q_value))
 
         self.pc_loss = pc_loss * self.FLAGS.pc_loss_lambda
-        #self.pc_loss = tf.clip_by_value(pc_loss, clip_value_min=-1,
-        #                           clip_value_max=2.0)
 
 ''' Wrapper for network'''
 class NetworkWrapper:
