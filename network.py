@@ -212,6 +212,8 @@ class BaseNetwork:
             self.init_aux_task_value_prediction()
         if FLAGS.has_frame_prediction :
             self.init_aux_task_frame_prediction()
+        if FLAGS.has_action_prediction :
+            self.init_aux_task_action_prediction()
 
     def init_auxiliary_tasks_loss(self, FLAGS):
         # Initialize loss and add to total loss
@@ -227,6 +229,10 @@ class BaseNetwork:
         if FLAGS.has_frame_prediction :
             self.init_aux_task_loss_frame_prediction()
             self.loss = self.loss + self.fp_loss
+        if FLAGS.has_action_prediction :
+            self.init_aux_task_loss_action_prediction()
+            self.loss = self.loss + self.ap_loss
+
     ''' Reward prediction network
         Branches of the last conv layer into an 128 FC -> 3 FC -> Softmax'''
     def init_aux_task_reward_prediction(self):
@@ -362,8 +368,122 @@ class A3CLSTM(BaseNetwork):
 
             return rnn_outputs, lstm_state_out
 
+    ''' Action prediction network reuses the LSTM (with sampled experience)'''
+    def init_aux_task_action_prediction(self):
+        with tf.device(self.device), tf.variable_scope(self.scope) as scope:
+            self.first_state_ap = tf.placeholder(shape=[None, self.input_size *
+                                           self.input_size ,self.no_frames],
+                                                           dtype=tf.float32,
+                                              name='first_state_ap')
+
+            # Reshape to be a 4d tensor
+            first_state_reshaped = tf.reshape(self.first_state_ap,
+                                           shape=[-1, self.input_size, self.input_size, self.no_frames]
+                                           , name='first_state_ap_reshaped')
+
+            self.second_state_ap = tf.placeholder(shape=[None, self.input_size *
+                                                     self.input_size,
+                                                     self.no_frames],
+                                              dtype=tf.float32,
+                                              name='second_state_ap')
+
+            # Reshape to be a 4d tensor
+            second_state_reshaped = tf.reshape(self.second_state_ap,
+                                              shape=[-1, self.input_size,
+                                                     self.input_size,
+                                                     self.no_frames]
+                                              , name='second_state_ap_reshaped')
+
+        # We pass our frames through the CNN
+        # Reuse variable
+        cnn_output_first = self.cnn_trunck(first_state_reshaped, reuse=True)
+        cnn_output_second = self.cnn_trunck(second_state_reshaped, reuse=True)
+
+        #We pass it through the FC layer
+        fc_output_first = self.fc_trunck(cnn_output_first, reuse=True)
+        fc_output_second = self.fc_trunck(cnn_output_second, reuse=True)
+
+        #As opposed to the reward prediction, we also reuse the LSTM
+        sequence_length = tf.shape(first_state_reshaped)[:1]
+
+        #Initial state of the lstm should be 0?
+        #Reset lstm state
+        zero_state = self.lstm.zero_state(1, tf.float32)
+
+        rnn_outputs_first, rnn_state = self.lstm_trunck(fc_output_first,
+                                                   sequence_length, zero_state, reuse=True)
+
+        rnn_outputs_second, rnn_state = self.lstm_trunck(fc_output_second,
+                                                        sequence_length,
+                                                        zero_state, reuse=True)
+
+        #Predict action
+        #Concat channels
+        rnn_outputs = tf.concat([rnn_outputs_first, rnn_outputs_second],axis=2)
+        rnn_outputs = tf.reshape(rnn_outputs, [-1,1,1, 256*2])
+
+        with tf.device(self.device), tf.variable_scope(self.scope) as scope:
+            #Conv 256
+            shape = [1, 1, 256*2, 256]
+            W_conv1, b_conv1 = self.init_weights_and_biases("W_conv1_ap",
+                                                                      shape)
+            conv1 = tf.nn.conv2d(rnn_outputs, filter=W_conv1,
+                                      strides=[1, 2, 2, 1], padding='VALID')
+
+            # RELU
+            relu1 = tf.nn.relu(conv1 + b_conv1)
+            relu1 = tf.reshape(relu1,[-1, 256])
+
+            with tf.variable_scope('Aux_AP') as scope:
+                # LSTM
+                # Create initial state for lstm
+                self.initial_cell_c_state_ap = tf.placeholder(dtype=tf.float32,
+                                                           shape=[1, 256],
+                                                           name='init_cell_c_state_ap')
+                self.initial_cell_h_state_ap = tf.placeholder(dtype=tf.float32,
+                                                           shape=[1, 256],
+                                                           name='init_cell_h_state_ap')
+                self.lstm_ap = tf.contrib.rnn.BasicLSTMCell(256,
+                                                            state_is_tuple=True)
+
+                self.lstm_state_ap = tf.contrib.rnn.LSTMStateTuple(
+                    self.initial_cell_c_state_ap, self.initial_cell_h_state_ap)
 
 
+                sequence_length = tf.shape(relu1)[:1]
+
+                relu1 = tf.reshape(relu1, shape=[1, -1, 256])
+
+
+                # Initial state of the lstm should be 0?
+                # Reset lstm state
+                zero_state = self.lstm.zero_state(1, tf.float32)
+
+                # tf.nn.dynamic_rnn
+                # time_major == False (default), this must be a Tensor of shape: [batch_size, max_time, ...]
+                rnn_outputs, rnn_state = tf.nn.dynamic_rnn(self.lstm_ap,
+                                                           relu1,
+                                                                     sequence_length=sequence_length,
+                                                                     initial_state=zero_state,
+                                                                     time_major=False, scope=scope)
+
+                self.lstm_state_out_ap = (rnn_state[0][:1, :], rnn_state[1][:1, :])
+
+
+
+
+            #predict action
+            shape = [256, 1 * self.action_size]
+            W_action, b_action = self.init_weights_and_biases("W_fc_ap",
+                                                                        shape)
+
+            rnn_outputs = tf.reshape(rnn_outputs,[-1,256])
+            # Softmax function to give probabilities in loss
+            self.ap_prediction = tf.matmul(rnn_outputs, W_action) + b_action
+
+
+
+        #TODO ADD LSTM HERE INSTEAD OF CONV?
     ''' Value prediction network reuses the LSTM and value prediction
         (with sampled experience)'''
     def init_aux_task_value_prediction(self):
@@ -579,6 +699,20 @@ class A3CLSTM(BaseNetwork):
                                               self.vp_prediction))
 
         self.vp_loss = vp_loss * self.FLAGS.vp_loss_lambda
+
+    ''' Action prediction loss '''
+    def init_aux_task_loss_action_prediction(self):
+        self.action_prediction_target = tf.placeholder(dtype=tf.int32,
+                                                      shape=[None],
+                                                      name='action_prediction_target')
+        # convert actions to onehot
+        action_target = tf.one_hot(self.action_prediction_target,
+                                   self.action_size, name='one_hot_action_ap')
+
+        ap_loss = tf.losses.softmax_cross_entropy(
+            action_target, self.ap_prediction,scope="ap_loss")
+
+        self.ap_loss = ap_loss * self.FLAGS.ap_loss_lambda
 
     ''' Pixel control loss '''
 

@@ -4,7 +4,7 @@ from network import NetworkWrapper
 from random import shuffle
 import time
 #from memory_profiler import profile
-
+import cv2
 
 
 ''' Worker class'''
@@ -184,11 +184,13 @@ class Worker():
 
     def get_auxiliary_tasks_input_frame_prediction(self, experience_replay,
                                                 session):
+        k_frames = 1
         index = np.random.randint(0,
-                                  len(experience_replay) - self.backup_step - 1)
+                                  len(experience_replay) - self.backup_step -
+                                  k_frames)
         sequence = experience_replay[index: index + self.backup_step]
-        sequence_target = experience_replay[index + 1: index +
-                                                       self.backup_step + 1]
+        sequence_target = experience_replay[index + k_frames: index +
+                                                       self.backup_step + k_frames]
         # observation = [frame, selected_action, reward, new_frame, value]
         # Get frames
         frames = [x[0] for x in sequence]
@@ -200,6 +202,33 @@ class Worker():
 
         return [frames], params, feed_dict_aux
 
+    ''' Do not skew distribution
+                Sample BACKUP_STEP consecutive observations
+        '''
+
+    def get_auxiliary_tasks_input_action_prediction(self, experience_replay,
+                                                session):
+        index = np.random.randint(0,
+                                  len(experience_replay) - self.backup_step - 1)
+        sequence = experience_replay[index: index + self.backup_step]
+
+        # observation = [frame, selected_action, reward, new_frame, value]
+        # Get frames
+        frames = [x[0] for x in sequence]
+        frames_next = [x[3] for x in sequence]
+        action_target = [x[1] for x in sequence]
+
+        lstm_state = self.network.lstm_state_init
+
+        feed_dict_aux = {self.network.first_state_ap: frames,
+                         self.network.second_state_ap: frames_next,
+                         self.network.action_prediction_target:action_target,
+                         self.network.initial_cell_c_state_ap: lstm_state[0],
+                         self.network.initial_cell_h_state_ap: lstm_state[1]
+                         }
+        params = [self.network.ap_loss]
+
+        return [frames, frames_next, action_target], params, feed_dict_aux
 
     ''' Do not skew distribution
         Sample BACKUP_STEP consecutive observations
@@ -258,6 +287,13 @@ class Worker():
             input_data_aux, params_aux, feed_dict_aux = \
                 self.get_auxiliary_tasks_input_frame_prediction(experience_replay,
                                                        session)
+            input_data.extend(input_data_aux)
+            params.extend(params_aux)
+            feed_dict.update(feed_dict_aux)
+        if self.FLAGS.has_action_prediction :
+            input_data_aux, params_aux, feed_dict_aux = \
+                self.get_auxiliary_tasks_input_action_prediction(
+                    experience_replay, session)
             input_data.extend(input_data_aux)
             params.extend(params_aux)
             feed_dict.update(feed_dict_aux)
@@ -324,6 +360,7 @@ class Worker():
         pixel_control_loss = None
         value_prediction_loss = None
         frame_prediction_loss = None
+        action_prediction_loss = None
 
         if self.FLAGS.has_reward_prediction:
             reward_prediction_loss = results[start_index] /len(rollout)
@@ -336,6 +373,9 @@ class Worker():
             start_index += 1
         if self.FLAGS.has_frame_prediction:
             frame_prediction_loss = results[start_index]/len(rollout)
+            start_index += 1
+        if self.FLAGS.has_action_prediction:
+            action_prediction_loss = results[start_index]/len(rollout)
 
         #network loss
         total_loss = results[-1] /len(rollout)
@@ -344,7 +384,8 @@ class Worker():
         values_to_plot = [value_loss / len(rollout), policy_loss / len(rollout), entropy / len(rollout),
                                clipped_grad_norm, reward_prediction_loss,
                           pixel_control_loss, value_prediction_loss,
-                          frame_prediction_loss, total_loss]
+                          frame_prediction_loss, action_prediction_loss,
+                          total_loss]
 
         return values_to_plot
 
@@ -377,7 +418,7 @@ class Worker():
 
         #Extract losses
         [value_loss, policy_loss, entropy, clipped_grad_norm, rp_loss,
-         pc_loss, vp_loss, fp_loss, total_loss] = losses
+         pc_loss, vp_loss, fp_loss, ap_loss, total_loss] = losses
 
         #Create gifs from frames
 
@@ -389,10 +430,11 @@ class Worker():
                          duration=len(images) * time_per_step, true_image=True, salience=False)
 
                 #save visitation map
-                visitation_map = self.game.construct_visitation_map()
-                if visitation_map != None:
-                    visitation_map.save(self.frames_path+'/visitation_map_' + str(
-                        episode_count) + '.png')
+                visitation_map= self.game.construct_visitation_map()
+                cv2.imwrite(
+                        self.frames_path+'/visitation_map_' +
+                                       str(episode_count) + '.png', visitation_map)
+                exit(1)
 
         #Save model at each 250 episodes
         if episode_count % 25 == 0 and self.name == 'thread_0':
@@ -420,6 +462,9 @@ class Worker():
         if fp_loss != None:
             summary.value.add(tag='Losses/AuxLosses/Frame Prediction',
                               simple_value=float(fp_loss))
+        if ap_loss != None:
+            summary.value.add(tag='Losses/AuxLosses/Action Prediction',
+                                  simple_value=float(ap_loss))
 
         self.summary_writer.add_summary(summary, episode_count)
         self.summary_writer.flush()
@@ -444,7 +489,7 @@ class Worker():
         episode_reward = 0
         episode_rewards_list = []
         episode_step_count = 0
-        toplot = [0, 0, 0, 0, None, None, None, None, 0]
+        toplot = [0, 0, 0, 0, None, None, None, None, None, 0]
         # Clean slate for each episode
         self.game.restart_game()
         rnn_state = None

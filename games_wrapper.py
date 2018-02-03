@@ -22,11 +22,13 @@ class LabWrapper:
         self.width = width
         self.frames_played = 0
         self.max_game_len = 3000
-
+        self.visitation_map = {}
+        self.reward_positions = []
         # Create game env
         self.game = self.set_lab_game_setup()
         # Reset game
         self.restart_game()
+        self.top_down_view=None
 
     def construct_visitation_map(self):
         return None
@@ -38,9 +40,12 @@ class LabWrapper:
         level = 'nav_maze_static_01'
         level = 'small_maze'
         #level = 'small_maze_multimap'
+
         env = deepmind_lab.Lab(
             level,
-            ['RGB_INTERLACED'],
+            ['RGB_INTERLACED',
+             'DEBUG.POS.TRANS',
+             'DEBUG.CAMERA.TOP_DOWN'],
             config={
                 'fps': str(60),
                 'width': str(self.width),
@@ -65,6 +70,9 @@ class LabWrapper:
     def restart_game(self):
         self.game.reset()
         self.frames_played = 0
+        self.visitation_map[self.frames_played] = self.game.observations()[
+            'DEBUG.POS.TRANS']
+
         #the starting point is random through env
 
     def process_frame(self, image):
@@ -94,7 +102,70 @@ class LabWrapper:
         reward = self.game.step(self.actions[action_index], num_steps=4)
         self.frames_played += 1
 
+        if self.game_finished():
+            self.visitation_map[self.frames_played] = self.visitation_map[
+                self.frames_played - 1] + (1,0,0)
+        else:
+            self.visitation_map[self.frames_played] = self.game.observations()['DEBUG.POS.TRANS']
+        if reward > 0 and not self.game_finished():
+            self.reward_positions.append(self.game.observations()[
+            'DEBUG.POS.TRANS'])
+
+
+
         return reward
+
+    def construct_visitation_map(self):
+        # mark rewards on map with red
+        max_pos_x = 0
+        max_pos_y = 0
+        min_pos_x = 9999
+        min_pos_y = 9999
+        for position in self.visitation_map:
+            (x,y,rot) = self.visitation_map[position]
+            if x > max_pos_x:
+                max_pos_x = x
+            if x < min_pos_x:
+                min_pos_x = x
+            if y > max_pos_y:
+                max_pos_y = y
+            if y < min_pos_y:
+                min_pos_y = y
+
+        print('image of shape (%d,%d,%d)'%(483,483,4))
+        print('bias x %d bias y %d'%(min_pos_x,min_pos_y))
+        print('max pos x %d max pos y %d'%(max_pos_x, max_pos_y))
+
+        image = np.ones((int(483+116), int(483+116),4))
+        image.fill(255)
+        image[:,:,3].fill(0)
+
+        transparency = np.linspace(20,255,len(self.visitation_map))
+        print('total steps %d '%len(self.visitation_map))
+
+        step_color = (128,0,255)
+
+        for timestep in range(len(self.visitation_map)):
+            (x,y,z) = self.visitation_map[timestep]
+            x = int(x)
+            y = int(y)
+            if timestep == 0 :
+                #red is start point
+                cv2.circle(image, (x,y), 7, (0,0,255,255), thickness=-1,
+                           lineType=8, shift=0)
+            elif timestep == len(self.visitation_map) - 1:
+                # blue is end point
+                cv2.circle(image, (x, y), 7, (255, 0 , 0,255), thickness=-1,
+                           lineType=8, shift=0)
+            else:
+                cv2.circle(image, (x, y), 4, (128,0,128,int(transparency[
+                                                                timestep])),
+                           thickness=-1,
+                           lineType=8, shift=0)
+
+
+
+        return image
 
 ''' Doom game class'''
 class DoomWrapper:

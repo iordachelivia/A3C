@@ -13,10 +13,12 @@ HAS_REWARD_PREDICTION = False
 HAS_PIXEL_CONTROL = False
 HAS_VALUE_PREDICTION = False
 HAS_FRAME_PREDICTION = False
+HAS_ACTION_PREDICTION = False
 VP_LOSS_LAMBDA = 1
 RP_LOSS_LAMBDA = 1
 PC_LOSS_LAMBDA = 0.0001
 FP_LOSS_LAMBDA = 1
+AP_LOSS_LAMBDA = 1
 
 # DEEPMIND LABYRINTH
 GAME_NAME = 'LabMaze'
@@ -36,8 +38,11 @@ RP = 1
 VP = 2
 PC = 3
 FP = 4
-RP_VP = 5
-RP_VP_PC = 6
+AP = 5
+RP_VP = 6
+RP_VP_PC = 7
+RP_VP_FP = 8
+RP_VP_AP = 9
 
 CONFIG = FP
 
@@ -61,8 +66,14 @@ if GAME_NAME == 'Copter':
 
     if CONFIG == FP:
         HAS_FRAME_PREDICTION = True
-        #-+FP_LOSS_LAMBDA = 0.0001
+        FP_LOSS_LAMBDA = 0.0001 #maybe?
         #FP_LOSS_LAMBDA = 0.000001
+        
+    if CONFIG == AP:
+        HAS_ACTION_PREDICTION = True
+        AP_LOSS_LAMBDA = 1
+        #livia
+        #todo try(no tries)
 
     if CONFIG == RP_VP:
         HAS_REWARD_PREDICTION = True
@@ -117,6 +128,13 @@ if GAME_NAME == 'Catcher':
         HAS_FRAME_PREDICTION = True
         FP_LOSS_LAMBDA = 0.0001
 
+    if CONFIG == AP:
+        HAS_ACTION_PREDICTION = True
+        AP_LOSS_LAMBDA = 1
+        #AP_LOSS_LAMBDA = 0.1 worse af
+        # AP_LOSS_LAMBDA = 10 worser
+
+
     if CONFIG == RP_VP:
         HAS_REWARD_PREDICTION = True
         HAS_VALUE_PREDICTION = True
@@ -158,12 +176,38 @@ if GAME_NAME == 'LabMaze':
         HAS_FRAME_PREDICTION = True
         FP_LOSS_LAMBDA = 0.0001
 
+    if CONFIG == AP:
+        HAS_ACTION_PREDICTION = True
+        AP_LOSS_LAMBDA = 1
+        #todo try (no tries)
+        #AP_LOSS_LAMBDA = 0.1 same
+        AP_LOSS_LAMBDA = 10
+        AP_LOSS_LAMBDA = 0.01
+        AP_LOSS_LAMBDA = 0.001
+        AP_LOSS_LAMBDA = 0.0001
+        AP_LOSS_LAMBDA = 0.00001
+        
+        AP_LOSS_LAMBDA = 0.1
+        AP_LOSS_LAMBDA = 0.01
+
+
     if CONFIG == RP_VP:
         HAS_REWARD_PREDICTION = True
         HAS_VALUE_PREDICTION = True
         VP_LOSS_LAMBDA = 0.1
         RP_LOSS_LAMBDA = 0.1
 
+    if CONFIG == RP_VP_FP:
+        HAS_REWARD_PREDICTION = True
+        HAS_VALUE_PREDICTION = True
+        HAS_FRAME_PREDICTION = True
+        VP_LOSS_LAMBDA = 0.1
+        RP_LOSS_LAMBDA = 0.1
+        FP_LOSS_LAMBDA = 0.0001
+
+        #above works
+        #FP_LOSS_LAMBDA = 0.00001
+        FP_LOSS_LAMBDA = 0.005
 
     if CONFIG == RP_VP_PC:
         HAS_REWARD_PREDICTION = True
@@ -206,6 +250,8 @@ parser.add_argument('--has_value_prediction', help='Use value prediction as '
                     'an auxiliary task', default=HAS_VALUE_PREDICTION)
 parser.add_argument('--has_frame_prediction', help='Use frame prediction as '
                     'an auxiliary task', default=HAS_FRAME_PREDICTION)
+parser.add_argument('--has_action_prediction', help='Use action prediction as '
+                    'an auxiliary task', default=HAS_ACTION_PREDICTION)
 parser.add_argument('--experience_buffer_maxlen', help='Experience buffer '
                     'maximum length', default=EXPERIENCE_BUFFER_MAXLEN)
 parser.add_argument('--pc_loss_lambda', help='Pixel control loss lambda '
@@ -216,5 +262,7 @@ parser.add_argument('--rp_loss_lambda', help='Reward prediction loss lambda '
                     'aux task', default=RP_LOSS_LAMBDA)
 parser.add_argument('--fp_loss_lambda', help='Frame prediction loss lambda '
                     'aux task', default=FP_LOSS_LAMBDA)
+parser.add_argument('--ap_loss_lambda', help='Action prediction loss lambda '
+                    'aux task', default=AP_LOSS_LAMBDA)
 
 FLAGS = parser.parse_args()

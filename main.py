@@ -50,9 +50,11 @@ with tf.device(FLAGS.device),tf.Session(config = config) as sess:
 
     coord = tf.train.Coordinator()
     if load_model == True:
-        print ('LOG: Loading Model...')
-        ckpt = tf.train.get_checkpoint_state(model_path)
-        saver.restore(sess, ckpt.model_checkpoint_path)
+        print ('LOG: Loading Model... %s'%model_path)
+        # ckpt = tf.train.get_checkpoint_state(model_path)
+        # model_checkpoint_path = ckpt.model_checkpoint_path
+        model_checkpoint_path = model_path + '/model-475.cptk'
+        saver.restore(sess, model_checkpoint_path)
     else:
         sess.run(tf.global_variables_initializer())
 

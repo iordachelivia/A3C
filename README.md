@@ -2,6 +2,7 @@
 Asynchronous Actor Critic with unsupervised auxiliary tasks
 
 # Done
+	Updated small_maze script to deepmind maze HEAD
     Hyperparameters rp, vp, pc, fp, rp+vp, rp+vp+pc
         * Catcher
         * Pixelcopter
@@ -12,15 +13,20 @@ Asynchronous Actor Critic with unsupervised auxiliary tasks
 ## TODO
 ### Priority 1
 
+Redo frame prediction
+Redo frame prediction with x[3] from seq
 1. Trajectory(to see optimality of exploration)
     * catcher done
     * copter
     * maze (have to modify source code to get position)
     
 2. AP : action prediction from experience replay
+	2.1. no lstm
+	2.2 conv 256->lstm 256->fc3 TODO : stride 1
+
 3. Add action to LSTM
 4. FR : frame reconstruction from latent space
-        
+5. Do not reset lstm state        
 ### Priority 2
 
 1. frames are placed into experience buffer twice?
@@ -33,11 +39,17 @@ Asynchronous Actor Critic with unsupervised auxiliary tasks
 Requires deepmind lab
 
 Place A3C folder in deepmind 'lab' folder
-
+Modify lab/BUILD
+    py_binary(
+    name = "a3c_train",
+    srcs = ["A3C/main.py"],
+    data = [":deepmind_lab.so"],
+    main = "A3C/main.py",
+    )
 ## Train model
 from lab directory
 
-    bazel run //A3C:train --define headless=osmesa
+    bazel run :a3c_train
 	
 ## Visualize logs
 from A3C directory
