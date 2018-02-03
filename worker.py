@@ -434,7 +434,7 @@ class Worker():
                 cv2.imwrite(
                         self.frames_path+'/visitation_map_' +
                                        str(episode_count) + '.png', visitation_map)
-                exit(1)
+                #exit(1)
 
         #Save model at each 250 episodes
         if episode_count % 25 == 0 and self.name == 'thread_0':
@@ -681,3 +681,10 @@ class Worker():
 
                 print('LOG: Worker ' + str(self.scope) + ' episode ' + str(
                     episode_count))
+
+
+            #coordinator requested stop. save model
+            if self.name == 'thread_0':
+                saver.save(sess, self.model_path + '/model-' + str(
+                    episode_count) + '.cptk')
+                print ("LOG: Saved Model")

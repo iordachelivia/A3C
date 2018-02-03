@@ -46,7 +46,7 @@ with tf.device(FLAGS.device),tf.Session(config = config) as sess:
         worker.init_game(GAME_NAME, INPUT_SIZE)
         workers.append(worker)
 
-    saver = tf.train.Saver(max_to_keep=5)
+    saver = tf.train.Saver(max_to_keep=20)
 
     coord = tf.train.Coordinator()
     if load_model == True:

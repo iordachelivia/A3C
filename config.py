@@ -44,7 +44,7 @@ RP_VP_PC = 7
 RP_VP_FP = 8
 RP_VP_AP = 9
 
-CONFIG = FP
+CONFIG = NO_AUX
 
 if GAME_NAME == 'Copter':
     ACTION_SIZE = 3
