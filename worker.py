@@ -195,9 +195,17 @@ class Worker():
         # Get frames
         frames = [x[0] for x in sequence]
         frames_target = [x[0] for x in sequence_target]
+        actions = [x[1] for x in sequence]
 
         feed_dict_aux = {self.network.previous_observations_fp: frames,
                          self.network.fp_previous_frames_target: frames_target}
+
+        if self.FLAGS.concat_action_lstm:
+            feed_dict_aux2 = {
+                self.network.previous_observations_fp_actions: actions
+            }
+            feed_dict_aux.update(feed_dict_aux2)
+
         params = [self.network.fp_loss]
 
         return [frames], params, feed_dict_aux
@@ -241,9 +249,19 @@ class Worker():
         #Get frames
         frames = [x[0] for x in sequence]
         rewards = [x[2] for x in sequence]
+        actions = [x[1] for x in sequence]
 
         #We have to pass the last frame through the network to get the bootstrap value
-        feed_dict = {self.network.previous_observations_vp: [frames[len(frames)-1]]}
+        feed_dict = {self.network.previous_observations_vp:
+                         [frames[len(frames)-1]]}
+
+        if self.FLAGS.concat_action_lstm:
+            feed_dict_aux = {
+                self.network.previous_observations_vp_actions:
+                    [actions[len(actions) - 1]]
+            }
+            feed_dict.update(feed_dict_aux)
+
         value_bootstrap = session.run(self.network.vp_prediction, feed_dict)[0]
 
         #Compute discounted returns for value prediction loss
@@ -252,6 +270,13 @@ class Worker():
 
         feed_dict_aux = {self.network.previous_observations_vp : frames,
                         self.network.value_prediction_target: discounted_values}
+
+        if self.FLAGS.concat_action_lstm:
+            feed_dict_aux2 = {
+                self.network.previous_observations_vp_actions: actions
+            }
+            feed_dict_aux.update(feed_dict_aux2)
+
         params = [self.network.vp_loss]
 
         return [frames, discounted_values], params, feed_dict_aux
@@ -343,6 +368,12 @@ class Worker():
             feed_dict_lstm = {self.network.initial_cell_c_state: lstm_state[0],
                               self.network.initial_cell_h_state: lstm_state[1]}
             feed_dict.update(feed_dict_lstm)
+
+            if self.FLAGS.concat_action_lstm:
+                feed_dict_aux = {
+                    self.network.previous_observations_actions : actions
+                }
+                feed_dict.update(feed_dict_aux)
 
         #Auxiliary tasks additional input
         #Only auxiliary tasks use experience replay
@@ -489,6 +520,7 @@ class Worker():
         episode_reward = 0
         episode_rewards_list = []
         episode_step_count = 0
+        selected_action = 0
         toplot = [0, 0, 0, 0, None, None, None, None, None, 0]
         # Clean slate for each episode
         self.game.restart_game()
@@ -510,6 +542,12 @@ class Worker():
                 feed_dict_lstm ={self.network.lstm_state[0]: rnn_state[0],
                                  self.network.lstm_state[1]: rnn_state[1]}
                 feed_dict.update(feed_dict_lstm)
+
+                if self.FLAGS.concat_action_lstm:
+                    feed_dict_lstm = {
+                        self.network.previous_observations_actions:
+                            [selected_action]}
+                    feed_dict.update(feed_dict_lstm)
 
                 policy, value, rnn_state = sess.run([self.network.policy, self.network.value,
                                                      self.network.lstm_state_out], feed_dict)
@@ -575,6 +613,11 @@ class Worker():
                     feed_dict_lstm ={self.network.lstm_state[0]: rnn_state[0],
                                      self.network.lstm_state[1]: rnn_state[1]}
                     feed_dict.update(feed_dict_lstm)
+                    if self.FLAGS.concat_action_lstm:
+                        feed_dict_lstm = {
+                            self.network.previous_observations_actions:
+                                [selected_action]}
+                        feed_dict.update(feed_dict_lstm)
 
                 value_bootstrap = sess.run(self.network.value, feed_dict)[0]
 
@@ -675,6 +718,10 @@ class Worker():
                     sess.run(self.increment)
                     global_ep = sess.run(self.global_episodes)
                     if global_ep == self.FLAGS.episodes:
+                        saver.save(sess, self.model_path + '/model-' + str(
+                            episode_count) + '.cptk')
+                        print ("LOG: Saved Model")
+
                         coord.request_stop()
                     print('LOG: ----------------Global episode %d'%global_ep)
                 episode_count += 1
@@ -682,9 +729,3 @@ class Worker():
                 print('LOG: Worker ' + str(self.scope) + ' episode ' + str(
                     episode_count))
 
-
-            #coordinator requested stop. save model
-            if self.name == 'thread_0':
-                saver.save(sess, self.model_path + '/model-' + str(
-                    episode_count) + '.cptk')
-                print ("LOG: Saved Model")

@@ -20,6 +20,12 @@ class BaseNetwork:
         self.device = FLAGS.device
         self.FLAGS = FLAGS
 
+        # LSTM size dependent on concat on/off
+        if self.FLAGS.concat_action_lstm:
+            self.lstm_additional_field = self.action_size
+        else:
+            self.lstm_additional_field = 0
+
 
         #Construct network in current scope
         with tf.device(self.device), tf.variable_scope(self.scope) as scope:
@@ -30,10 +36,10 @@ class BaseNetwork:
 
         #We need to reuse the CNN layers for auxiliary tasks
         #So the conv layers will take an arbitrary size input parameter
-        self.cnn_output = self.cnn_trunck(self.input_reshaped)
+        self.cnn_output = self.cnn_trunk(self.input_reshaped)
 
         #Fully connected 256 layer
-        self.fc_output = self.fc_trunck(self.cnn_output)
+        self.fc_output = self.fc_trunk(self.cnn_output)
 
     def normalized_columns_initializer(std=1.0):
         def _initializer(shape, dtype=None, partition_info=None):
@@ -70,7 +76,7 @@ class BaseNetwork:
         return weights, biases
 
     ''' Reuse first FC layer'''
-    def fc_trunck(self, input, reuse=False):
+    def fc_trunk(self, input, reuse=False):
         with tf.device(self.device), tf.variable_scope(self.scope, reuse=reuse) as scope:
             # FC1
             # Relu2 outputs 9x9x32
@@ -87,7 +93,7 @@ class BaseNetwork:
             return relu3
 
     ''' Reuse cnn layers for auxiliary tasks'''
-    def cnn_trunck(self, input, reuse=False):
+    def cnn_trunk(self, input, reuse=False):
         with tf.device(self.device), tf.variable_scope(self.scope, reuse=reuse) as scope:
             # Conv1
             # Create weights and biases
@@ -115,10 +121,12 @@ class BaseNetwork:
     def value_trunk(self, input, reuse=False):
         with tf.device(self.device), tf.variable_scope(self.scope, reuse=reuse) as scope:
             # Reshape rnn outputs to be [1,256]
-            input_reshaped = tf.reshape(input, shape=[-1, 256])
+            #channels = 256 + self.lstm_additional_field
+            channels = 256
+            input_reshaped = tf.reshape(input, shape=[-1, channels])
 
             # VALUE
-            shape = [256, 1]
+            shape = [channels, 1]
             self.W_value, self.b_value = self.init_weights_and_biases("W_value", shape)
 
             # linear
@@ -133,10 +141,12 @@ class BaseNetwork:
     def policy_trunk(self, input, reuse=False):
         with tf.device(self.device), tf.variable_scope(self.scope, reuse=reuse) as scope:
             # Reshape rnn outputs to be [1,256]
-            input_reshaped = tf.reshape(input, shape=[-1, 256])
+            #channels = 256 + self.lstm_additional_field
+            channels = 256
+            input_reshaped = tf.reshape(input, shape=[-1, channels])
 
             # POLICY
-            shape = [256, 1 * self.action_size]
+            shape = [channels, 1 * self.action_size]
             self.W_policy, self.b_policy = self.init_weights_and_biases("W_policy", shape)
 
             # Softmax function to give probabilities
@@ -246,7 +256,7 @@ class BaseNetwork:
 
         #We pass our frames through the CNN
         #Reuse variable
-        cnn_output = self.cnn_trunck(prev_obs_reshaped, reuse=True)
+        cnn_output = self.cnn_trunk(prev_obs_reshaped, reuse=True)
 
         with tf.device(self.device), tf.variable_scope(self.scope) as scope:
             #FC 128 layer with relu
@@ -319,21 +329,44 @@ class A3CLSTM(BaseNetwork):
 
         #Construct network in current scope
         with tf.device(self.device), tf.variable_scope(self.scope) as scope:
+            lstm_input = self.fc_output
+
+            #Action concat to LSTM
+            if self.FLAGS.concat_action_lstm:
+                self.previous_observations_actions =  tf.placeholder(shape=[
+                    None], dtype=tf.int32, \
+                    name='action_placeholder_for_lstm_in_base')
+
+                prev_act_reshaped = tf.one_hot(self.previous_observations_actions,
+                                       self.action_size,
+                                       name='one_hot_action_for_lstm')
+
+                lstm_input = tf.concat([self.fc_output, prev_act_reshaped],
+                                       axis=1)
+
             #The network up to this point is initialized by the BaseNetwork
 
             sequence_length = tf.shape(self.input_reshaped)[:1]
 
             # We need to initialize the lstm state in order to use it later
-            self.lstm_state_init = tf.contrib.rnn.LSTMStateTuple(np.zeros([1, 256]), np.zeros([1, 256]))
+            #channels = 256 + self.lstm_additional_field
+            channels = 256
+            c_state = np.zeros([1, channels])
+            h_state = np.zeros([1, channels])
+            self.lstm_state_init = tf.contrib.rnn.LSTMStateTuple(c_state,h_state)
 
             # LSTM
-            self.lstm = tf.contrib.rnn.BasicLSTMCell(256, state_is_tuple=True)
+            self.lstm = tf.contrib.rnn.BasicLSTMCell(channels, state_is_tuple=True)
             # Create initial state for lstm
-            self.initial_cell_c_state = tf.placeholder(dtype=tf.float32, shape=[1, 256], name='init_cell_c_state')
-            self.initial_cell_h_state = tf.placeholder(dtype=tf.float32, shape=[1, 256], name='init_cell_h_state')
+            self.initial_cell_c_state = tf.placeholder(dtype=tf.float32,
+                                                       shape=[1, channels],
+                                                       name='init_cell_c_state')
+            self.initial_cell_h_state = tf.placeholder(dtype=tf.float32,
+                                                       shape=[1, channels],
+                                                       name='init_cell_h_state')
             self.lstm_state = tf.contrib.rnn.LSTMStateTuple(self.initial_cell_c_state, self.initial_cell_h_state)
 
-        rnn_outputs, self.lstm_state_out = self.lstm_trunck(self.fc_output, sequence_length, self.lstm_state)
+        rnn_outputs, self.lstm_state_out = self.lstm_trunk(lstm_input, sequence_length, self.lstm_state)
 
         #POLICY
         self.policy = self.policy_trunk(rnn_outputs)
@@ -351,11 +384,13 @@ class A3CLSTM(BaseNetwork):
 
 
     ''' Reuse lstm + cnn layers for auxiliary tasks'''
-    def lstm_trunck(self, input, sequence_length, lstm_state, reuse=False):
+    def lstm_trunk(self, input, sequence_length, lstm_state, reuse=False):
         with tf.device(self.device), tf.variable_scope(self.scope, reuse=reuse) as scope:
-            # Reshape output to be ?, 256
+            # Reshape output to be ?, lstm channels
             # 3d tensor to use with dynamic rnn which needs [batch_size, max_time, ...]
-            input_reshaped = tf.reshape(input, shape=[1, -1, 256])
+
+            channels = 256 + self.lstm_additional_field
+            input_reshaped = tf.reshape(input, shape=[1, -1, channels])
 
             # tf.nn.dynamic_rnn
             # time_major == False (default), this must be a Tensor of shape: [batch_size, max_time, ...]
@@ -396,12 +431,12 @@ class A3CLSTM(BaseNetwork):
 
         # We pass our frames through the CNN
         # Reuse variable
-        cnn_output_first = self.cnn_trunck(first_state_reshaped, reuse=True)
-        cnn_output_second = self.cnn_trunck(second_state_reshaped, reuse=True)
+        cnn_output_first = self.cnn_trunk(first_state_reshaped, reuse=True)
+        cnn_output_second = self.cnn_trunk(second_state_reshaped, reuse=True)
 
         #We pass it through the FC layer
-        fc_output_first = self.fc_trunck(cnn_output_first, reuse=True)
-        fc_output_second = self.fc_trunck(cnn_output_second, reuse=True)
+        fc_output_first = self.fc_trunk(cnn_output_first, reuse=True)
+        fc_output_second = self.fc_trunk(cnn_output_second, reuse=True)
 
         #As opposed to the reward prediction, we also reuse the LSTM
         sequence_length = tf.shape(first_state_reshaped)[:1]
@@ -410,21 +445,23 @@ class A3CLSTM(BaseNetwork):
         #Reset lstm state
         zero_state = self.lstm.zero_state(1, tf.float32)
 
-        rnn_outputs_first, rnn_state = self.lstm_trunck(fc_output_first,
+        rnn_outputs_first, rnn_state = self.lstm_trunk(fc_output_first,
                                                    sequence_length, zero_state, reuse=True)
 
-        rnn_outputs_second, rnn_state = self.lstm_trunck(fc_output_second,
+        rnn_outputs_second, rnn_state = self.lstm_trunk(fc_output_second,
                                                         sequence_length,
                                                         zero_state, reuse=True)
 
         #Predict action
         #Concat channels
         rnn_outputs = tf.concat([rnn_outputs_first, rnn_outputs_second],axis=2)
-        rnn_outputs = tf.reshape(rnn_outputs, [-1,1,1, 256*2])
+        #channels = 256 + self.lstm_additional_field
+        channels = 256
+        rnn_outputs = tf.reshape(rnn_outputs, [-1,1,1, channels*2])
 
         with tf.device(self.device), tf.variable_scope(self.scope) as scope:
             #Conv 256
-            shape = [1, 1, 256*2, 256]
+            shape = [1, 1, channels*2, channels]
             W_conv1, b_conv1 = self.init_weights_and_biases("W_conv1_ap",
                                                                       shape)
             conv1 = tf.nn.conv2d(rnn_outputs, filter=W_conv1,
@@ -432,18 +469,18 @@ class A3CLSTM(BaseNetwork):
 
             # RELU
             relu1 = tf.nn.relu(conv1 + b_conv1)
-            relu1 = tf.reshape(relu1,[-1, 256])
+            relu1 = tf.reshape(relu1,[-1, channels])
 
             with tf.variable_scope('Aux_AP') as scope:
                 # LSTM
                 # Create initial state for lstm
                 self.initial_cell_c_state_ap = tf.placeholder(dtype=tf.float32,
-                                                           shape=[1, 256],
+                                                           shape=[1, channels],
                                                            name='init_cell_c_state_ap')
                 self.initial_cell_h_state_ap = tf.placeholder(dtype=tf.float32,
-                                                           shape=[1, 256],
+                                                           shape=[1, channels],
                                                            name='init_cell_h_state_ap')
-                self.lstm_ap = tf.contrib.rnn.BasicLSTMCell(256,
+                self.lstm_ap = tf.contrib.rnn.BasicLSTMCell(channels,
                                                             state_is_tuple=True)
 
                 self.lstm_state_ap = tf.contrib.rnn.LSTMStateTuple(
@@ -452,7 +489,7 @@ class A3CLSTM(BaseNetwork):
 
                 sequence_length = tf.shape(relu1)[:1]
 
-                relu1 = tf.reshape(relu1, shape=[1, -1, 256])
+                relu1 = tf.reshape(relu1, shape=[1, -1, channels])
 
 
                 # Initial state of the lstm should be 0?
@@ -473,11 +510,11 @@ class A3CLSTM(BaseNetwork):
 
 
             #predict action
-            shape = [256, 1 * self.action_size]
+            shape = [channels, 1 * self.action_size]
             W_action, b_action = self.init_weights_and_biases("W_fc_ap",
                                                                         shape)
 
-            rnn_outputs = tf.reshape(rnn_outputs,[-1,256])
+            rnn_outputs = tf.reshape(rnn_outputs,[-1,channels])
             # Softmax function to give probabilities in loss
             self.ap_prediction = tf.matmul(rnn_outputs, W_action) + b_action
 
@@ -496,12 +533,26 @@ class A3CLSTM(BaseNetwork):
                                            shape=[-1, self.input_size, self.input_size, self.no_frames]
                                            , name='previous_observations_vp_reshaped')
 
+            if self.FLAGS.concat_action_lstm:
+                self.previous_observations_vp_actions =  tf.placeholder(shape=[
+                    None], dtype=tf.int32, \
+                    name='action_placeholder_for_lstm')
+
+                prev_act_reshaped = tf.one_hot(self.previous_observations_vp_actions,
+                                       self.action_size,
+                                       name='one_hot_action_for_vp')
+
         # We pass our frames through the CNN
         # Reuse variable
-        cnn_output = self.cnn_trunck(prev_obs_reshaped, reuse=True)
+        cnn_output = self.cnn_trunk(prev_obs_reshaped, reuse=True)
 
         #We pass it through the FC layer
-        fc_output = self.fc_trunck(cnn_output, reuse=True)
+        fc_output = self.fc_trunk(cnn_output, reuse=True)
+        lstm_input = fc_output
+
+        if self.FLAGS.concat_action_lstm:
+            #Concatenate actions so as to pass to LSTM
+            lstm_input = tf.concat([fc_output, prev_act_reshaped], 1)
 
         #As opposed to the reward prediction, we also reuse the LSTM
         sequence_length = tf.shape(prev_obs_reshaped)[:1]
@@ -510,7 +561,7 @@ class A3CLSTM(BaseNetwork):
         #Reset lstm state
         zero_state = self.lstm.zero_state(1, tf.float32)
 
-        rnn_outputs, rnn_state = self.lstm_trunck(fc_output, sequence_length, zero_state, reuse=True)
+        rnn_outputs, rnn_state = self.lstm_trunk(lstm_input, sequence_length, zero_state, reuse=True)
 
         #Predict value
         self.vp_prediction = self.value_trunk(rnn_outputs, reuse=True)
@@ -529,13 +580,29 @@ class A3CLSTM(BaseNetwork):
                                            shape=[-1, self.input_size, self.input_size, self.no_frames]
                                            ,
                                            name='previous_observations_fp_reshaped')
+        if self.FLAGS.concat_action_lstm:
+            self.previous_observations_fp_actions = tf.placeholder(shape=[
+                None], dtype=tf.int32, \
+                name='fp_action_placeholder_for_lstm')
+
+            prev_act_reshaped = tf.one_hot(
+                self.previous_observations_fp_actions,
+                self.action_size,
+                name='one_hot_action_for_fp')
+
+
 
         # We pass our frames through the CNN
         # Reuse variable
-        cnn_output = self.cnn_trunck(prev_obs_reshaped, reuse=True)
+        cnn_output = self.cnn_trunk(prev_obs_reshaped, reuse=True)
 
         # We pass it through the FC layer
-        fc_output = self.fc_trunck(cnn_output, reuse=True)
+        fc_output = self.fc_trunk(cnn_output, reuse=True)
+        lstm_input = fc_output
+
+        if self.FLAGS.concat_action_lstm:
+            # Concatenate actions so as to pass to LSTM
+            lstm_input = tf.concat([fc_output, prev_act_reshaped], 1)
 
         # As opposed to the reward prediction, we also reuse the LSTM
         sequence_length = tf.shape(prev_obs_reshaped)[:1]
@@ -544,12 +611,15 @@ class A3CLSTM(BaseNetwork):
         # Reset lstm state
         zero_state = self.lstm.zero_state(1, tf.float32)
 
-        rnn_outputs, rnn_state = self.lstm_trunck(fc_output, sequence_length, zero_state, reuse=True)
-        rnn_outputs = tf.reshape(rnn_outputs, [-1, 256])
+        rnn_outputs, rnn_state = self.lstm_trunk(lstm_input, sequence_length, zero_state, reuse=True)
+
+        #channels = 256 + self.lstm_additional_field
+        channels = 256
+        rnn_outputs = tf.reshape(rnn_outputs, [-1, channels])
 
         with tf.device(self.device), tf.variable_scope(self.scope) as scope:
             # Map lstm output to 9x9x32 to reconstruct the cnn trunk output
-            shape = [256, 9 * 9 * 32]
+            shape = [channels, 9 * 9 * 32]
             W_fc_fp1, b_fc_fp1 = self.init_weights_and_biases("W_fc_fp1", shape)
             fc_fp = tf.nn.relu(tf.matmul(rnn_outputs, W_fc_fp1) + b_fc_fp1)
             fc_fp = tf.reshape(fc_fp, [-1, 9, 9, 32])
@@ -617,10 +687,10 @@ class A3CLSTM(BaseNetwork):
 
         # We pass our frames through the CNN
         # Reuse variable
-        cnn_output = self.cnn_trunck(prev_obs_reshaped, reuse=True)
+        cnn_output = self.cnn_trunk(prev_obs_reshaped, reuse=True)
 
         # We pass it through the FC layer
-        fc_output = self.fc_trunck(cnn_output, reuse=True)
+        fc_output = self.fc_trunk(cnn_output, reuse=True)
 
         # As opposed to the reward prediction, we also reuse the LSTM
         sequence_length = tf.shape(prev_obs_reshaped)[:1]
@@ -629,7 +699,8 @@ class A3CLSTM(BaseNetwork):
         # Reset lstm state
         zero_state = self.lstm.zero_state(1, tf.float32)
 
-        rnn_outputs, rnn_state = self.lstm_trunck(fc_output, sequence_length, zero_state, reuse=True)
+        rnn_outputs, rnn_state = self.lstm_trunk(fc_output, sequence_length, zero_state, reuse=True)
+
         rnn_outputs = tf.reshape(rnn_outputs, [-1, 256])
 
         with tf.device(self.device), tf.variable_scope(self.scope) as scope:
@@ -727,10 +798,21 @@ class A3CLSTM(BaseNetwork):
                                        ,
                                        name='fp_previous_frames_target_reshaped')
 
-        # Log because the loss is very high
-        # fp_loss = tf.reduce_sum(np.square(self.q_target - q_value))
-        fp_loss = tf.reduce_sum(tf.nn.l2_loss(fp_previous_frames_target_reshaped -
-                                              self.fp_reconstruction))
+        # Check whether we predict the next frame or the difference between
+        # frames
+        if self.FLAGS.has_frame_dif_prediction:
+            real_difference = self.fp_previous_frames_target - self.previous_observations_fp
+            reshaped_difference = tf.reshape(real_difference, [-1,
+                                                               self.input_size,
+                                                               self.input_size,
+                                                               self.no_frames])
+            fp_loss = tf.reduce_sum(tf.nn.l2_loss(reshaped_difference -
+                                                  self.fp_reconstruction))
+        else:
+            # Log because the loss is very high
+            # fp_loss = tf.reduce_sum(np.square(self.q_target - q_value))
+            fp_loss = tf.reduce_sum(tf.nn.l2_loss(fp_previous_frames_target_reshaped -
+                                                  self.fp_reconstruction))
 
         self.fp_loss = fp_loss * self.FLAGS.fp_loss_lambda
 

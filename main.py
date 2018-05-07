@@ -76,6 +76,7 @@ with tf.device(FLAGS.device),tf.Session(config = config) as sess:
                                                              minutes))
 
 '''
-    COMMAND :bazel run //A3C_pc_latest:train --define headless=osmesa
+    From lab directory (where A3C directory was placed)
+    COMMAND :bazel run :a3c_train --define headless=osmesa
     tensorboard --logdir=worker_0:'./train_0',worker_1:'./train_1',worker_2:'./train_2',worker_3:'./train_3'
 '''

@@ -19,7 +19,7 @@ Asynchronous Actor Critic with unsupervised auxiliary tasks
 
 ## Setup
 
-Requires deepmind lab
+Requires deepmind lab. (Tested with last commit 832c50ee2a80b8b1e4a15fd60d1f8c1b7774c8ea)
 ```
 $ git clone https://github.com/deepmind/lab.git
 ```
@@ -55,9 +55,9 @@ from A3C directory
 ## TODO
 
 ### Priority 1
-1. Add action to LSTM
-2. Stacked LSTM
-3. Do not reset lstm state
+1. Flow instead of FP/FD
+2. Do not reset lstm state
+3. VQ-VAE
 
 
 ### Priority 2
@@ -67,5 +67,9 @@ from A3C directory
 1. Saliency map
 2. Attention mechanism
 3. Foveal vision for navigation (https://arxiv.org/pdf/1801.08116.pdf)
+
+## Done but not working as expected
+1. Add action to LSTM 
+2. FD - predict frame pixel difference instead of actual frame
 
 [WORK IN PROGRESS]

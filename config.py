@@ -9,10 +9,16 @@ BETA = 0.01
 LEARNING_RATE = 7e-4
 EPISODES = 500
 EXPERIENCE_BUFFER_MAXLEN = 2000
+
+''' Do not modify this portion '''
 HAS_REWARD_PREDICTION = False
 HAS_PIXEL_CONTROL = False
 HAS_VALUE_PREDICTION = False
+
 HAS_FRAME_PREDICTION = False
+# predict diference between frames
+HAS_FRAME_DIF_PREDICTION = False
+
 HAS_ACTION_PREDICTION = False
 VP_LOSS_LAMBDA = 1
 RP_LOSS_LAMBDA = 1
@@ -20,6 +26,21 @@ PC_LOSS_LAMBDA = 0.0001
 FP_LOSS_LAMBDA = 1
 AP_LOSS_LAMBDA = 1
 
+# Tasks
+NO_AUX = 0
+RP = 1
+VP = 2
+PC = 3
+FP = 4
+FP_DIF = 5
+AP = 6
+RP_VP = 7
+RP_VP_PC = 8
+RP_VP_FP = 9
+RP_VP_AP = 10
+
+
+''' Choose env '''
 # DEEPMIND LABYRINTH
 GAME_NAME = 'LabMaze'
 
@@ -28,25 +49,21 @@ GAME_NAME = 'LabMaze'
 
 # PLE RAYCASTMAZE
 # GAME_NAME = 'Maze'
-
+#
 # PLE PIXELCOPTER
 #GAME_NAME = 'Copter'
 
-# Tasks
-NO_AUX = 0
-RP = 1
-VP = 2
-PC = 3
-FP = 4
-AP = 5
-RP_VP = 6
-RP_VP_PC = 7
-RP_VP_FP = 8
-RP_VP_AP = 9
 
-CONFIG = NO_AUX
+''' Choose task '''
+CONFIG = FP_DIF
+
+
+# CONCAT ACTION IN LSTM
+# only available for labmaze and FP task and RP+VP task and VP task
+CONCAT_ACTION_LSTM = False
 
 if GAME_NAME == 'Copter':
+    CONCAT_ACTION_LSTM = False
     ACTION_SIZE = 3
     BACKUP_STEP = 20
     EPISODES = 1000
@@ -66,13 +83,11 @@ if GAME_NAME == 'Copter':
 
     if CONFIG == FP:
         HAS_FRAME_PREDICTION = True
-        FP_LOSS_LAMBDA = 0.0001 #maybe?
-        #FP_LOSS_LAMBDA = 0.000001
+        FP_LOSS_LAMBDA = 0.0001
         
     if CONFIG == AP:
         HAS_ACTION_PREDICTION = True
         AP_LOSS_LAMBDA = 1
-        #livia
         #todo try(no tries)
 
     if CONFIG == RP_VP:
@@ -90,27 +105,13 @@ if GAME_NAME == 'Copter':
         PC_LOSS_LAMBDA = 0.000005
 
 
-if GAME_NAME == 'Maze':
-    #TODO PARAMS NOT GOOD
-    ACTION_SIZE = 4
-    NO_FRAMES = 1
-    BACKUP_STEP = 30
-    VP_LOSS_LAMBDA = 0.01
-    RP_LOSS_LAMBDA = 1
-    PC_LOSS_LAMBDA = 0.0001
-    FP_LOSS_LAMBDA = 1
-    HAS_REWARD_PREDICTION = True
-    HAS_PIXEL_CONTROL = False
-    HAS_VALUE_PREDICTION = True
-    HAS_FRAME_PREDICTION = False
-
 if GAME_NAME == 'Catcher':
-    #TODO CATCHER CONFIG
     ACTION_SIZE = 3
     NO_FRAMES = 1
     BACKUP_STEP = 30
     EPISODES = 1000
     BETA = 0.01
+    #CONCAT_ACTION_LSTM = False
 
     if CONFIG == RP:
         HAS_REWARD_PREDICTION = True
@@ -128,12 +129,16 @@ if GAME_NAME == 'Catcher':
         HAS_FRAME_PREDICTION = True
         FP_LOSS_LAMBDA = 0.0001
 
+    # not optimized
+    if CONFIG == FP_DIF:
+        HAS_FRAME_DIF_PREDICTION = True
+        HAS_FRAME_PREDICTION = True
+
+        FP_LOSS_LAMBDA = 0.0001
+
     if CONFIG == AP:
         HAS_ACTION_PREDICTION = True
         AP_LOSS_LAMBDA = 1
-        #AP_LOSS_LAMBDA = 0.1 worse af
-        # AP_LOSS_LAMBDA = 10 worser
-
 
     if CONFIG == RP_VP:
         HAS_REWARD_PREDICTION = True
@@ -157,38 +162,60 @@ if GAME_NAME == 'LabMaze':
     BACKUP_STEP = 20
     BETA = 1
 
+
     if CONFIG == NO_AUX:
         BETA = 1
+        CONCAT_ACTION_LSTM = False
 
     if CONFIG == RP:
         HAS_REWARD_PREDICTION = True
         RP_LOSS_LAMBDA = 1
+        CONCAT_ACTION_LSTM = False
 
     if CONFIG == VP:
         HAS_VALUE_PREDICTION = True
         VP_LOSS_LAMBDA = 0.1
 
+        #Not optimized
+        if CONCAT_ACTION_LSTM:
+            VP_LOSS_LAMBDA = 0.1
+            VP_LOSS_LAMBDA = 0.05
+            VP_LOSS_LAMBDA = 1.0
+            VP_LOSS_LAMBDA = 0.2
+            VP_LOSS_LAMBDA = 0.1
+
+
     if CONFIG == PC:
         HAS_PIXEL_CONTROL = True
         PC_LOSS_LAMBDA = 0.0001 # not good enough
+        CONCAT_ACTION_LSTM = False
 
     if CONFIG == FP:
         HAS_FRAME_PREDICTION = True
         FP_LOSS_LAMBDA = 0.0001
 
+        #different hyperparam
+        #not optimized
+        if CONCAT_ACTION_LSTM:
+            FP_LOSS_LAMBDA = 0.0001
+            FP_LOSS_LAMBDA = 0.00001
+            FP_LOSS_LAMBDA = 0.001
+            FP_LOSS_LAMBDA = 0.01
+
+    if CONFIG == FP_DIF:
+        HAS_FRAME_DIF_PREDICTION = True
+        HAS_FRAME_PREDICTION = True
+
+        FP_LOSS_LAMBDA = 0.0001
+        FP_LOSS_LAMBDA = 0.001
+        FP_LOSS_LAMBDA = 0.00001
+        FP_LOSS_LAMBDA = 0.000001
+        FP_LOSS_LAMBDA = 0.01
+
     if CONFIG == AP:
         HAS_ACTION_PREDICTION = True
-        AP_LOSS_LAMBDA = 1
-        #todo try (no tries)
-        #AP_LOSS_LAMBDA = 0.1 same
-        AP_LOSS_LAMBDA = 10
         AP_LOSS_LAMBDA = 0.01
-        AP_LOSS_LAMBDA = 0.001
-        AP_LOSS_LAMBDA = 0.0001
-        AP_LOSS_LAMBDA = 0.00001
-        
-        AP_LOSS_LAMBDA = 0.1
-        AP_LOSS_LAMBDA = 0.01
+        CONCAT_ACTION_LSTM = False
 
 
     if CONFIG == RP_VP:
@@ -197,6 +224,11 @@ if GAME_NAME == 'LabMaze':
         VP_LOSS_LAMBDA = 0.1
         RP_LOSS_LAMBDA = 0.1
 
+        if CONCAT_ACTION_LSTM:
+            VP_LOSS_LAMBDA = 0.1
+            RP_LOSS_LAMBDA = 0.1
+
+
     if CONFIG == RP_VP_FP:
         HAS_REWARD_PREDICTION = True
         HAS_VALUE_PREDICTION = True
@@ -204,10 +236,8 @@ if GAME_NAME == 'LabMaze':
         VP_LOSS_LAMBDA = 0.1
         RP_LOSS_LAMBDA = 0.1
         FP_LOSS_LAMBDA = 0.0001
+        CONCAT_ACTION_LSTM = False
 
-        #above works
-        #FP_LOSS_LAMBDA = 0.00001
-        FP_LOSS_LAMBDA = 0.005
 
     if CONFIG == RP_VP_PC:
         HAS_REWARD_PREDICTION = True
@@ -217,6 +247,7 @@ if GAME_NAME == 'LabMaze':
         RP_LOSS_LAMBDA = 1
         VP_LOSS_LAMBDA = 1
         PC_LOSS_LAMBDA = 0.001
+        CONCAT_ACTION_LSTM = False
 
 
 
@@ -242,6 +273,9 @@ parser.add_argument('--network_type', help='Type of network (FF or LSTM)',
                     default=NETWORK_TYPE)
 parser.add_argument('--episodes', help='Number of episodes',
                     default=EPISODES)
+parser.add_argument('--concat_action_lstm', help='Whether to concat action to '
+                                                 'lstm or not',
+                    default=CONCAT_ACTION_LSTM)
 parser.add_argument('--has_reward_prediction', help='Use reward prediction as '
                     'an auxiliary task', default=HAS_REWARD_PREDICTION)
 parser.add_argument('--has_pixel_control', help='Use pixel control as an '
@@ -250,6 +284,9 @@ parser.add_argument('--has_value_prediction', help='Use value prediction as '
                     'an auxiliary task', default=HAS_VALUE_PREDICTION)
 parser.add_argument('--has_frame_prediction', help='Use frame prediction as '
                     'an auxiliary task', default=HAS_FRAME_PREDICTION)
+parser.add_argument('--has_frame_dif_prediction', help='Use frame diference '
+                    'prediction as an auxiliary task',
+                    default=HAS_FRAME_DIF_PREDICTION)
 parser.add_argument('--has_action_prediction', help='Use action prediction as '
                     'an auxiliary task', default=HAS_ACTION_PREDICTION)
 parser.add_argument('--experience_buffer_maxlen', help='Experience buffer '
