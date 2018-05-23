@@ -3,7 +3,7 @@ import scipy
 import numpy as np
 from ple.games.catcher import Catcher
 from ple.games.raycastmaze import RaycastMaze
-#from ple.games.pixelcopter_v2 import Pixelcopter_v2
+from ple.games.pixelcopter_v2 import Pixelcopter_v2
 from ple import PLE
 from PIL import Image
 import deepmind_lab
@@ -412,7 +412,7 @@ class PixelcopterWrapper:
         '''
                     @game : game instance
         '''
-        p = PLE(game, display_screen=False)
+        p = PLE(game, display_screen=True)
         self.actions = p.getActionSet()
         p.init()
         return p

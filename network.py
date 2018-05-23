@@ -224,6 +224,8 @@ class BaseNetwork:
             self.init_aux_task_frame_prediction()
         if FLAGS.has_action_prediction :
             self.init_aux_task_action_prediction()
+        if FLAGS.has_flow_prediction :
+            self.init_aux_task_flow_prediction()
 
     def init_auxiliary_tasks_loss(self, FLAGS):
         # Initialize loss and add to total loss
@@ -242,6 +244,9 @@ class BaseNetwork:
         if FLAGS.has_action_prediction :
             self.init_aux_task_loss_action_prediction()
             self.loss = self.loss + self.ap_loss
+        if FLAGS.has_flow_prediction:
+            self.init_aux_task_loss_flow_prediction()
+            self.loss = self.loss + self.fl_loss
 
     ''' Reward prediction network
         Branches of the last conv layer into an 128 FC -> 3 FC -> Softmax'''
@@ -672,6 +677,101 @@ class A3CLSTM(BaseNetwork):
             # 84,84,1
             self.fp_reconstruction = tf.nn.relu(fp_deconv2 + b_deconv_fp2)
 
+    ''' Frame prediction network reuses the LSTM (with sampled experience)'''
+
+    def init_aux_task_flow_prediction(self):
+        with tf.device(self.device), tf.variable_scope(self.scope) as scope:
+            self.previous_observations_fl = tf.placeholder(
+                shape=[None, self.input_size * self.input_size,
+                       self.no_frames],
+                dtype=tf.float32, name='previous_observations_fl')
+
+            # Reshape to be a 4d tensor
+            prev_obs_reshaped = tf.reshape(self.previous_observations_fl,
+                                           shape=[-1, self.input_size,
+                                                  self.input_size,
+                                                  self.no_frames]
+                                           ,
+                                           name='previous_observations_fl_reshaped')
+
+        # We pass our frames through the CNN
+        # Reuse variable
+        cnn_output = self.cnn_trunk(prev_obs_reshaped, reuse=True)
+
+        # We pass it through the FC layer
+        fc_output = self.fc_trunk(cnn_output, reuse=True)
+        lstm_input = fc_output
+
+        # As opposed to the reward prediction, we also reuse the LSTM
+        sequence_length = tf.shape(prev_obs_reshaped)[:1]
+
+        # Initial state of the lstm should be 0?
+        # Reset lstm state
+        zero_state = self.lstm.zero_state(1, tf.float32)
+
+        rnn_outputs, rnn_state = self.lstm_trunk(lstm_input, sequence_length,
+                                                 zero_state, reuse=True)
+
+        # channels = 256 + self.lstm_additional_field
+        channels = 256
+        rnn_outputs = tf.reshape(rnn_outputs, [-1, channels])
+
+        with tf.device(self.device), tf.variable_scope(self.scope) as scope:
+            # Map lstm output to 9x9x32 to reconstruct the cnn trunk output
+            shape = [channels, 9 * 9 * 32]
+            W_fc_fp1, b_fc_fp1 = self.init_weights_and_biases("W_fc_fl1", shape)
+            fc_fp = tf.nn.relu(tf.matmul(rnn_outputs, W_fc_fp1) + b_fc_fp1)
+            fc_fp = tf.reshape(fc_fp, [-1, 9, 9, 32])
+
+            # Deconv layer map to 20x20x16
+            shape = [4, 4, 16, 32]
+            W_deconv_fp1, b_deconv_fp1 = self.init_weights_and_biases(
+                "W_deconv_fl1", shape)
+
+            # TODO
+            padding_type = 'VALID'
+            if padding_type == 'VALID':
+                out_height = (fc_fp.shape[1].value - 1) * 2 + \
+                             W_deconv_fp1.get_shape()[0].value
+                out_width = (fc_fp.shape[2].value - 1) * 2 + \
+                            W_deconv_fp1.get_shape()[1].value
+                out_shape = [tf.shape(fc_fp)[0], out_height, out_width,
+                             W_deconv_fp1.get_shape()[
+                                 2].value]
+            fp_deconv1 = tf.nn.conv2d_transpose(fc_fp,
+                                                filter=W_deconv_fp1,
+                                                output_shape=out_shape,
+                                                strides=[1, 2, 2, 1],
+                                                padding='VALID')
+
+            # 20x20x16
+            fp_deconv1 = tf.nn.relu(fp_deconv1 + b_deconv_fp1)
+
+            # Deconv layer map to 84x84x2
+            # 2 is for flow
+            shape = [8, 8, 2, 16]
+            W_deconv_fp2, b_deconv_fp2 = self.init_weights_and_biases(
+                "W_deconv_fl2", shape)
+
+            # TODO
+            padding_type = 'VALID'
+            if padding_type == 'VALID':
+                out_height = (out_height - 1) * 4 + \
+                             W_deconv_fp2.get_shape()[0].value
+                out_width = (out_width - 1) * 4 + \
+                            W_deconv_fp2.get_shape()[1].value
+                out_shape = [tf.shape(fp_deconv1)[0], out_height, out_width,
+                             W_deconv_fp2.get_shape()[
+                                 2].value]
+            fp_deconv2 = tf.nn.conv2d_transpose(fp_deconv1,
+                                                filter=W_deconv_fp2,
+                                                output_shape=out_shape,
+                                                strides=[1, 4, 4, 1],
+                                                padding='VALID')
+
+            # 84,84,2
+            self.flow_prediction = tf.nn.relu(fp_deconv2 + b_deconv_fp2)
+
     ''' Pixel control network reuses the LSTM and value prediction
             (with sampled experience)'''
     def init_aux_task_pixel_control(self):
@@ -815,6 +915,25 @@ class A3CLSTM(BaseNetwork):
                                                   self.fp_reconstruction))
 
         self.fp_loss = fp_loss * self.FLAGS.fp_loss_lambda
+
+    def init_aux_task_loss_flow_prediction(self):
+        self.fl_target = tf.placeholder(dtype=tf.float32,
+                                               shape=[None, self.input_size *
+                                                      self.input_size,
+                                                      2])
+        fl_target_reshaped = tf.reshape(self.fl_target,
+                                       shape=[-1, self.input_size,
+                                              self.input_size, 2]
+                                       ,name='fl_target_reshaped')
+
+
+        # Log because the loss is very high
+        # fp_loss = tf.reduce_sum(np.square(self.q_target - q_value))
+        # flow_loss = tf.reduce_sum(tf.nn.l2_loss(fl_target_reshaped -
+        #                                          self.flow_prediction))
+        flow_loss = tf.reduce_sum(tf.abs(fl_target_reshaped - self.flow_prediction))
+        self.fl_loss = flow_loss * self.FLAGS.fl_loss_lambda
+
 
     ''' Pixel control loss '''
     def init_aux_task_loss_pixel_control(self):

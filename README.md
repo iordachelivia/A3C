@@ -55,6 +55,7 @@ from A3C directory
 ## TODO
 
 ### Priority 1
+0. L1 loss pe FP
 1. Flow instead of FP/FD
 2. Do not reset lstm state
 3. VQ-VAE

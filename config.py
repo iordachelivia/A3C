@@ -18,6 +18,7 @@ HAS_VALUE_PREDICTION = False
 HAS_FRAME_PREDICTION = False
 # predict diference between frames
 HAS_FRAME_DIF_PREDICTION = False
+HAS_FLOW_PREDICTION = False
 
 HAS_ACTION_PREDICTION = False
 VP_LOSS_LAMBDA = 1
@@ -25,6 +26,8 @@ RP_LOSS_LAMBDA = 1
 PC_LOSS_LAMBDA = 0.0001
 FP_LOSS_LAMBDA = 1
 AP_LOSS_LAMBDA = 1
+#FLOW
+FL_LOSS_LAMBDA = 1
 
 # Tasks
 NO_AUX = 0
@@ -33,11 +36,12 @@ VP = 2
 PC = 3
 FP = 4
 FP_DIF = 5
-AP = 6
-RP_VP = 7
-RP_VP_PC = 8
-RP_VP_FP = 9
-RP_VP_AP = 10
+FL = 6
+AP = 7
+RP_VP = 8
+RP_VP_PC = 9
+RP_VP_FP = 10
+RP_VP_AP = 11
 
 
 ''' Choose env '''
@@ -55,8 +59,7 @@ GAME_NAME = 'LabMaze'
 
 
 ''' Choose task '''
-CONFIG = FP_DIF
-
+CONFIG = FP
 
 # CONCAT ACTION IN LSTM
 # only available for labmaze and FP task and RP+VP task and VP task
@@ -68,7 +71,9 @@ if GAME_NAME == 'Copter':
     BACKUP_STEP = 20
     EPISODES = 1000
     BETA = 1
-
+    if CONFIG == FL:
+        HAS_FLOW_PREDICTION = True
+        FL_LOSS_LAMBDA = 1
     if CONFIG == RP:
         HAS_REWARD_PREDICTION = True
         RP_LOSS_LAMBDA = 0.01
@@ -136,6 +141,10 @@ if GAME_NAME == 'Catcher':
 
         FP_LOSS_LAMBDA = 0.0001
 
+    if CONFIG == FL:
+        HAS_FLOW_PREDICTION = True
+        FL_LOSS_LAMBDA = 1
+
     if CONFIG == AP:
         HAS_ACTION_PREDICTION = True
         AP_LOSS_LAMBDA = 1
@@ -201,6 +210,9 @@ if GAME_NAME == 'LabMaze':
             FP_LOSS_LAMBDA = 0.00001
             FP_LOSS_LAMBDA = 0.001
             FP_LOSS_LAMBDA = 0.01
+        
+        #backward    
+        FP_LOSS_LAMBDA = 0.0001
 
     if CONFIG == FP_DIF:
         HAS_FRAME_DIF_PREDICTION = True
@@ -211,6 +223,13 @@ if GAME_NAME == 'LabMaze':
         FP_LOSS_LAMBDA = 0.00001
         FP_LOSS_LAMBDA = 0.000001
         FP_LOSS_LAMBDA = 0.01
+
+    if CONFIG == FL:
+        HAS_FLOW_PREDICTION = True
+        FL_LOSS_LAMBDA = 1
+        FL_LOSS_LAMBDA = 10
+        FL_LOSS_LAMBDA = 100 # best for predicting next fm
+        
 
     if CONFIG == AP:
         HAS_ACTION_PREDICTION = True
@@ -287,6 +306,9 @@ parser.add_argument('--has_frame_prediction', help='Use frame prediction as '
 parser.add_argument('--has_frame_dif_prediction', help='Use frame diference '
                     'prediction as an auxiliary task',
                     default=HAS_FRAME_DIF_PREDICTION)
+parser.add_argument('--has_flow_prediction', help='Use flow '
+                    'prediction as an auxiliary task',
+                    default=HAS_FLOW_PREDICTION)
 parser.add_argument('--has_action_prediction', help='Use action prediction as '
                     'an auxiliary task', default=HAS_ACTION_PREDICTION)
 parser.add_argument('--experience_buffer_maxlen', help='Experience buffer '
@@ -299,6 +321,8 @@ parser.add_argument('--rp_loss_lambda', help='Reward prediction loss lambda '
                     'aux task', default=RP_LOSS_LAMBDA)
 parser.add_argument('--fp_loss_lambda', help='Frame prediction loss lambda '
                     'aux task', default=FP_LOSS_LAMBDA)
+parser.add_argument('--fl_loss_lambda', help='Flow prediction loss lambda '
+                    'aux task', default=FL_LOSS_LAMBDA)
 parser.add_argument('--ap_loss_lambda', help='Action prediction loss lambda '
                     'aux task', default=AP_LOSS_LAMBDA)
 

@@ -195,6 +195,13 @@ class Worker():
         # Get frames
         frames = [x[0] for x in sequence]
         frames_target = [x[0] for x in sequence_target]
+        
+        # switch so we can predict previous frame 
+        # backward
+        frames_aux = frames
+        frames = frames_target
+        frames_target = frames_aux
+        
         actions = [x[1] for x in sequence]
 
         feed_dict_aux = {self.network.previous_observations_fp: frames,
@@ -207,6 +214,52 @@ class Worker():
             feed_dict_aux.update(feed_dict_aux2)
 
         params = [self.network.fp_loss]
+
+        return [frames], params, feed_dict_aux
+
+
+    ''' Do not skew distribution
+                Sample BACKUP_STEP consecutive observations
+        '''
+
+    def get_auxiliary_tasks_input_flow_prediction(self, experience_replay,
+                                                session):
+        k_frames = 1
+        index = np.random.randint(0,
+                                  len(experience_replay) - self.backup_step -
+                                  k_frames)
+        sequence = experience_replay[index: index + self.backup_step]
+        sequence_target = experience_replay[index + k_frames: index +
+                                                       self.backup_step + k_frames]
+        # observation = [frame, selected_action, reward, new_frame, value]
+        # Get frames
+        frames = [x[0] for x in sequence]
+        frames_target = [x[0] for x in sequence_target]
+
+        # compute flow from frames and target frames
+        flow_target = []
+        for (prvs,next) in zip(frames, frames_target):
+            flow = cv2.calcOpticalFlowFarneback(prvs, next, None, 0.5, 3, 15, 3, 5,
+                                            1.2, 0)
+            # hsv = np.zeros((84,84,3),dtype=np.uint8)
+            # hsv[..., 1] = 255
+            # flow = np.reshape(flow,(84,84,2))
+            # mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+            # hsv[..., 0] = ang * 180 / np.pi / 2
+            # hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+            # bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+            # cv2.imwrite('frame2.jpg', bgr)
+            # cv2.imwrite('frame2_hsv.jpg', hsv)
+            # cv2.imwrite('frame_prev.jpg',np.reshape(prvs,(84,84,1)))
+            # cv2.imwrite('frame_nxt.jpg', np.reshape(next, (84, 84, 1)))
+            # #k = cv2.waitKey(0)
+
+            flow_target.append(np.reshape(flow,newshape=(-1,2)))
+
+        feed_dict_aux = {self.network.previous_observations_fl: frames,
+                         self.network.fl_target: flow_target}
+
+        params = [self.network.fl_loss]
 
         return [frames], params, feed_dict_aux
 
@@ -322,6 +375,13 @@ class Worker():
             input_data.extend(input_data_aux)
             params.extend(params_aux)
             feed_dict.update(feed_dict_aux)
+        if self.FLAGS.has_flow_prediction:
+            input_data_aux, params_aux, feed_dict_aux = \
+                self.get_auxiliary_tasks_input_flow_prediction(
+                    experience_replay, session)
+            input_data.extend(input_data_aux)
+            params.extend(params_aux)
+            feed_dict.update(feed_dict_aux)
 
         return input_data, params, feed_dict
 
@@ -392,6 +452,7 @@ class Worker():
         value_prediction_loss = None
         frame_prediction_loss = None
         action_prediction_loss = None
+        flow_prediction_loss = None
 
         if self.FLAGS.has_reward_prediction:
             reward_prediction_loss = results[start_index] /len(rollout)
@@ -407,6 +468,9 @@ class Worker():
             start_index += 1
         if self.FLAGS.has_action_prediction:
             action_prediction_loss = results[start_index]/len(rollout)
+            start_index += 1
+        if self.FLAGS.has_flow_prediction:
+            flow_prediction_loss = results[start_index]/len(rollout)
 
         #network loss
         total_loss = results[-1] /len(rollout)
@@ -416,6 +480,7 @@ class Worker():
                                clipped_grad_norm, reward_prediction_loss,
                           pixel_control_loss, value_prediction_loss,
                           frame_prediction_loss, action_prediction_loss,
+                          flow_prediction_loss,
                           total_loss]
 
         return values_to_plot
@@ -449,7 +514,7 @@ class Worker():
 
         #Extract losses
         [value_loss, policy_loss, entropy, clipped_grad_norm, rp_loss,
-         pc_loss, vp_loss, fp_loss, ap_loss, total_loss] = losses
+         pc_loss, vp_loss, fp_loss, ap_loss, fl_loss, total_loss] = losses
 
         #Create gifs from frames
 
@@ -496,6 +561,9 @@ class Worker():
         if ap_loss != None:
             summary.value.add(tag='Losses/AuxLosses/Action Prediction',
                                   simple_value=float(ap_loss))
+        if fl_loss != None:
+            summary.value.add(tag='Losses/AuxLosses/Flow Prediction',
+                              simple_value=float(fl_loss))
 
         self.summary_writer.add_summary(summary, episode_count)
         self.summary_writer.flush()
@@ -521,7 +589,7 @@ class Worker():
         episode_rewards_list = []
         episode_step_count = 0
         selected_action = 0
-        toplot = [0, 0, 0, 0, None, None, None, None, None, 0]
+        toplot = [0, 0, 0, 0, None, None, None, None, None, None, 0]
         # Clean slate for each episode
         self.game.restart_game()
         rnn_state = None
