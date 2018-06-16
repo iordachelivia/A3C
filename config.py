@@ -7,9 +7,10 @@ NO_FRAMES = 1
 GAMMA = 0.99
 BETA = 0.01
 LEARNING_RATE = 7e-4
-EPISODES = 500
+EPISODES = 501
+IS_TRAINING = True
 EXPERIENCE_BUFFER_MAXLEN = 2000
-
+# EXPERIENCE_BUFFER_MAXLEN = 40
 ''' Do not modify this portion '''
 HAS_REWARD_PREDICTION = False
 HAS_PIXEL_CONTROL = False
@@ -18,16 +19,26 @@ HAS_VALUE_PREDICTION = False
 HAS_FRAME_PREDICTION = False
 # predict diference between frames
 HAS_FRAME_DIF_PREDICTION = False
+
+HAS_FRAME_THRESH_PREDICTION = False
+
 HAS_FLOW_PREDICTION = False
 
 HAS_ACTION_PREDICTION = False
+
+HAS_VQVAE_FRAME_RECONSTRUCTION = False
+
+
+
 VP_LOSS_LAMBDA = 1
 RP_LOSS_LAMBDA = 1
 PC_LOSS_LAMBDA = 0.0001
 FP_LOSS_LAMBDA = 1
+FP_THRESH_LOSS_LAMBDA = 1
 AP_LOSS_LAMBDA = 1
 #FLOW
 FL_LOSS_LAMBDA = 1
+VQVAE_LOSS_LAMBDA = 1
 
 # Tasks
 NO_AUX = 0
@@ -36,12 +47,14 @@ VP = 2
 PC = 3
 FP = 4
 FP_DIF = 5
-FL = 6
-AP = 7
-RP_VP = 8
-RP_VP_PC = 9
-RP_VP_FP = 10
-RP_VP_AP = 11
+FP_THRESH = 6
+FL = 7
+AP = 8
+VQVAE = 9
+RP_VP = 10
+RP_VP_PC = 11
+RP_VP_FP = 12
+RP_VP_AP = 13
 
 
 ''' Choose env '''
@@ -50,6 +63,7 @@ GAME_NAME = 'LabMaze'
 
 # PLE CATCHER
 #GAME_NAME = 'Catcher'
+# GAME_NAME = 'Catcher'
 
 # PLE RAYCASTMAZE
 # GAME_NAME = 'Maze'
@@ -141,6 +155,11 @@ if GAME_NAME == 'Catcher':
 
         FP_LOSS_LAMBDA = 0.0001
 
+    # not optimized
+    if CONFIG == FP_THRESH:
+        HAS_FRAME_THRESH_PREDICTION = True
+        FP_THRESH_LOSS_LAMBDA = 1
+
     if CONFIG == FL:
         HAS_FLOW_PREDICTION = True
         FL_LOSS_LAMBDA = 1
@@ -148,6 +167,10 @@ if GAME_NAME == 'Catcher':
     if CONFIG == AP:
         HAS_ACTION_PREDICTION = True
         AP_LOSS_LAMBDA = 1
+
+    if CONFIG == VQVAE:
+        HAS_VQVAE_FRAME_RECONSTRUCTION = True
+        VQVAE_LOSS_LAMBDA = 1e-24
 
     if CONFIG == RP_VP:
         HAS_REWARD_PREDICTION = True
@@ -201,7 +224,7 @@ if GAME_NAME == 'LabMaze':
 
     if CONFIG == FP:
         HAS_FRAME_PREDICTION = True
-        FP_LOSS_LAMBDA = 0.0001
+        FP_LOSS_LAMBDA = 0.0001 #   BEST FOR K=1
 
         #different hyperparam
         #not optimized
@@ -211,8 +234,15 @@ if GAME_NAME == 'LabMaze':
             FP_LOSS_LAMBDA = 0.001
             FP_LOSS_LAMBDA = 0.01
         
-        #backward    
+        #backward k=-1  
         FP_LOSS_LAMBDA = 0.0001
+        
+        #k=0
+        #FP_LOSS_LAMBDA = 0.001
+        #just conv
+        #FP_LOSS_LAMBDA = 0.00001
+        
+
 
     if CONFIG == FP_DIF:
         HAS_FRAME_DIF_PREDICTION = True
@@ -224,17 +254,53 @@ if GAME_NAME == 'LabMaze':
         FP_LOSS_LAMBDA = 0.000001
         FP_LOSS_LAMBDA = 0.01
 
+    # not optimized
+    if CONFIG == FP_THRESH:
+        HAS_FRAME_THRESH_PREDICTION = True
+        FP_THRESH_LOSS_LAMBDA = 0.0001
+        FP_THRESH_LOSS_LAMBDA = 0.001
+        FP_THRESH_LOSS_LAMBDA = 0.00007
+        FP_THRESH_LOSS_LAMBDA = 0.0002
+        FP_THRESH_LOSS_LAMBDA = 0.0001
+
+        # FP_THRESH_LOSS_LAMBDA = 1 #softmax
+        # FP_THRESH_LOSS_LAMBDA = 0.1
+        # FP_THRESH_LOSS_LAMBDA = 0.01
+        # FP_THRESH_LOSS_LAMBDA = 10
+        
+        FP_THRESH_LOSS_LAMBDA = 0.00001 #just conv
+
+        FP_THRESH_LOSS_LAMBDA = 0.0001
+
     if CONFIG == FL:
         HAS_FLOW_PREDICTION = True
         FL_LOSS_LAMBDA = 1
         FL_LOSS_LAMBDA = 10
         FL_LOSS_LAMBDA = 100 # best for predicting next fm
-        
+
+        FL_LOSS_LAMBDA = 1e-3
+        FL_LOSS_LAMBDA = 1e-5
+        FL_LOSS_LAMBDA = 1e-6 # best for correct prediction
+        FL_LOSS_LAMBDA = 1e-7
+        FL_LOSS_LAMBDA = 1e-5
 
     if CONFIG == AP:
         HAS_ACTION_PREDICTION = True
         AP_LOSS_LAMBDA = 0.01
         CONCAT_ACTION_LSTM = False
+
+    if CONFIG == VQVAE:
+        HAS_VQVAE_FRAME_RECONSTRUCTION = True
+        VQVAE_LOSS_LAMBDA = 1e-24
+        VQVAE_LOSS_LAMBDA = 1e-22
+
+        VQVAE_LOSS_LAMBDA = 1e-10
+        VQVAE_LOSS_LAMBDA = 1e-15
+        VQVAE_LOSS_LAMBDA = 1e-18
+
+        # based on grad prob -17/-16??
+        VQVAE_LOSS_LAMBDA = 1
+        #VQVAE_LOSS_LAMBDA = 10
 
 
     if CONFIG == RP_VP:
@@ -306,11 +372,17 @@ parser.add_argument('--has_frame_prediction', help='Use frame prediction as '
 parser.add_argument('--has_frame_dif_prediction', help='Use frame diference '
                     'prediction as an auxiliary task',
                     default=HAS_FRAME_DIF_PREDICTION)
+parser.add_argument('--has_frame_prediction_thresholded', help='Use frame '
+                                                          'thresholded '
+                    'prediction as an auxiliary task',
+                    default=HAS_FRAME_THRESH_PREDICTION)
 parser.add_argument('--has_flow_prediction', help='Use flow '
                     'prediction as an auxiliary task',
                     default=HAS_FLOW_PREDICTION)
 parser.add_argument('--has_action_prediction', help='Use action prediction as '
                     'an auxiliary task', default=HAS_ACTION_PREDICTION)
+parser.add_argument('--has_vqvae_prediction', help='Use vqvae prediction as '
+                    'an auxiliary task', default=HAS_VQVAE_FRAME_RECONSTRUCTION)
 parser.add_argument('--experience_buffer_maxlen', help='Experience buffer '
                     'maximum length', default=EXPERIENCE_BUFFER_MAXLEN)
 parser.add_argument('--pc_loss_lambda', help='Pixel control loss lambda '
@@ -321,9 +393,16 @@ parser.add_argument('--rp_loss_lambda', help='Reward prediction loss lambda '
                     'aux task', default=RP_LOSS_LAMBDA)
 parser.add_argument('--fp_loss_lambda', help='Frame prediction loss lambda '
                     'aux task', default=FP_LOSS_LAMBDA)
+parser.add_argument('--fp_thresh_loss_lambda', help='Frame '
+                                                    'thresholded prediction '
+                                                    'loss lambda '
+                    'aux task', default=FP_THRESH_LOSS_LAMBDA)
 parser.add_argument('--fl_loss_lambda', help='Flow prediction loss lambda '
                     'aux task', default=FL_LOSS_LAMBDA)
 parser.add_argument('--ap_loss_lambda', help='Action prediction loss lambda '
                     'aux task', default=AP_LOSS_LAMBDA)
+parser.add_argument('--vqvae_loss_lambda', help='VQVAE prediction loss lambda '
+                    'aux task', default=VQVAE_LOSS_LAMBDA)
+parser.add_argument('--is_training',help='training?',default=True)
 
 FLAGS = parser.parse_args()

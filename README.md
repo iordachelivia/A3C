@@ -14,6 +14,8 @@ Asynchronous Actor Critic with unsupervised auxiliary tasks
 		fp - Frame prediction (unskewed sampling)
 		rp_vp_fp
 		ap - Action prediction (unskewed sampling)
+		ftp - Frame threshold prediction (image is thresholded)
+		flp - Flow prediction
         
     Bigger beta for exploration works best when the episode is short
 
@@ -33,6 +35,13 @@ Place A3C folder in deepmind 'lab' folder
     main = "A3C/main.py",
     )
 ## Train model
+### Modify parameters
+in config.py
+    
+    ''' Choose task '''
+    CONFIG = FP
+    
+### Run
 from lab directory
 
     bazel run :a3c_train
@@ -48,26 +57,6 @@ from A3C directory
 	
 ## Navigation maps
 	navigation_visual_results folder
-	
-	
-
-
-## TODO
-
-### Priority 1
-0. L1 loss pe FP
-1. Flow instead of FP/FD
-2. Do not reset lstm state
-3. VQ-VAE
-
-
-### Priority 2
-1. for FP save reconstructed images even though they are of no importance
-
-### Priority 3
-1. Saliency map
-2. Attention mechanism
-3. Foveal vision for navigation (https://arxiv.org/pdf/1801.08116.pdf)
 
 ## Done but not working as expected
 1. Add action to LSTM 

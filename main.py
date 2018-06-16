@@ -9,19 +9,26 @@ from time import sleep, time
 
 
 load_model = False
+if load_model == True:
+    FLAGS.experience_buffer_maxlen = 100
+    FLAGS.episodes = 600
 
 #Reset the graph
 tf.reset_default_graph()
 
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
-model_path = dir_path + '/model'
+model_path = dir_path + '/train_0'
 frames_path = dir_path + '/frames'
 #Create folders
 if not os.path.exists(model_path):
     os.makedirs(model_path)
 if not os.path.exists(frames_path):
     os.makedirs(frames_path)
+
+# copy tsv for embeddings
+bashCommand = "cp " + dir_path + "/embedding_metadata.tsv " + model_path
+os.system(bashCommand)
 
 config = tf.ConfigProto(allow_soft_placement = True)
 config.gpu_options.allow_growth = True
@@ -36,7 +43,7 @@ with tf.device(FLAGS.device),tf.Session(config = config) as sess:
 
     # Set workers ot number of available CPU threads
     num_workers = multiprocessing.cpu_count()
-    #num_workers = 1
+    # num_workers = 1
     workers = []
     for index in range(num_workers):
         # Create worker classes
@@ -51,9 +58,9 @@ with tf.device(FLAGS.device),tf.Session(config = config) as sess:
     coord = tf.train.Coordinator()
     if load_model == True:
         print ('LOG: Loading Model... %s'%model_path)
-        # ckpt = tf.train.get_checkpoint_state(model_path)
         # model_checkpoint_path = ckpt.model_checkpoint_path
-        model_checkpoint_path = model_path + '/model-475.cptk'
+        # model_checkpoint_path = model_path + '/model-500.ckpt'
+        model_checkpoint_path = tf.train.latest_checkpoint(model_path)
         saver.restore(sess, model_checkpoint_path)
     else:
         sess.run(tf.global_variables_initializer())

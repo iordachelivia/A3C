@@ -5,7 +5,8 @@ from random import shuffle
 import time
 #from memory_profiler import profile
 import cv2
-
+from tensorflow.contrib.tensorboard.plugins import projector
+import copy
 
 ''' Worker class'''
 class Worker():
@@ -24,7 +25,6 @@ class Worker():
         self.scope = self.name
         self.index = index
         self.base_path = base_path
-        self.model_path = base_path + '/model'
         self.frames_path = base_path + '/frames'
         self.session = session
         self.trainer = trainer
@@ -45,6 +45,17 @@ class Worker():
         # Create the local copy of the network and the tensorflow op to copy global paramters to local network
         self.sync_to_master = self.update_target_graph('global', self.name)
         self.summary_writer = tf.summary.FileWriter(base_path + "/train_" + str(index), self.session.graph)
+
+        # This is a shameless hack and should not be here
+        if self.name == 'thread_0' and self.FLAGS.has_vqvae_prediction:
+            # Visualize embeddings
+            config_proj = projector.ProjectorConfig()
+            embedding = config_proj.embeddings.add()
+            embedding.tensor_name = self.network.embeds.name
+            embedding.metadata_path = os.path.join(base_path + "/train_" + str(index),'embedding_metadata.tsv')
+            # The next line writes a projector_config.pbtxt in the LOG_DIR. TensorBoard will
+            # read this file during startup.
+            projector.visualize_embeddings(self.summary_writer, config_proj)
 
     ''' Synchronizes 2 networks
             It copies the first network's parameters into the second'''
@@ -195,12 +206,7 @@ class Worker():
         # Get frames
         frames = [x[0] for x in sequence]
         frames_target = [x[0] for x in sequence_target]
-        
-        # switch so we can predict previous frame 
-        # backward
-        frames_aux = frames
-        frames = frames_target
-        frames_target = frames_aux
+
         
         actions = [x[1] for x in sequence]
 
@@ -213,7 +219,52 @@ class Worker():
             }
             feed_dict_aux.update(feed_dict_aux2)
 
-        params = [self.network.fp_loss]
+        params = [self.network.fp_loss,
+                  self.network.fp_previous_frames_target,
+                  self.network.fp_reconstruction]
+
+        return [frames], params, feed_dict_aux
+
+    def get_auxiliary_tasks_input_frame_prediction_thresholded(self,
+                                                         experience_replay,
+                                                   session):
+        k_frames = 1
+        index = np.random.randint(0,
+                                  len(experience_replay) - self.backup_step -
+                                  k_frames)
+        sequence = experience_replay[index: index + self.backup_step]
+        sequence_target = experience_replay[index + k_frames: index +
+                                                              self.backup_step + k_frames]
+        # observation = [frame, selected_action, reward, new_frame, value]
+        # Get frames
+        frames = [x[0] for x in sequence]
+        frames_target = [x[0] for x in sequence_target]
+
+        # threshold target frames so they are black and white
+        frames_target_thresholded = []
+        for frame in frames_target:
+            frame = frame * 255
+
+            reshaped = np.reshape(frame, (84,84))
+            reshaped = reshaped.astype(np.uint8)
+            median = cv2.medianBlur(reshaped, 15)
+            ret, thresh = cv2.threshold(median, 127, 255, 0)
+            thresh = thresh / 255.0
+            reshaped = np.reshape(thresh,frame.shape)
+            frames_target_thresholded.append(reshaped)
+
+
+        actions = [x[1] for x in sequence]
+
+        feed_dict_aux = {self.network.previous_observations_fp_thresh: frames,
+                         self.network.current_observations_fp_thresh:frames_target,
+                         self.network.fp_thresh_previous_frames_target:frames_target_thresholded }
+
+
+        params = [self.network.fp_thresh_loss,
+                  self.network.current_observations_fp_thresh,
+                  self.network.fp_thresh_previous_frames_target,
+                  self.network.fp_thresh_reconstruction_vis ]
 
         return [frames], params, feed_dict_aux
 
@@ -221,6 +272,16 @@ class Worker():
     ''' Do not skew distribution
                 Sample BACKUP_STEP consecutive observations
         '''
+    def convert_flow_to_bgr(self, flow):
+        hsv = np.zeros((84,84,3),dtype=np.uint8)
+        hsv[..., 1] = 255
+        flow = np.reshape(flow,(84,84,2))
+        mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+        hsv[..., 0] = ang * 180 / np.pi / 2
+        hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+        bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+
+        return bgr
 
     def get_auxiliary_tasks_input_flow_prediction(self, experience_replay,
                                                 session):
@@ -238,28 +299,58 @@ class Worker():
 
         # compute flow from frames and target frames
         flow_target = []
-        for (prvs,next) in zip(frames, frames_target):
-            flow = cv2.calcOpticalFlowFarneback(prvs, next, None, 0.5, 3, 15, 3, 5,
+        for (prvs,nxt) in zip(frames, frames_target):
+            # un-normalize images
+            prvs = (prvs * 255.).astype(np.uint8)
+            prvs = np.reshape(prvs,(84,84))
+            nxt = (nxt * 255.).astype(np.uint8)
+            nxt = np.reshape(nxt, (84, 84))
+
+            flow = cv2.calcOpticalFlowFarneback(prvs, nxt, None, 0.5, 3, 15,
+                                                3, 5,
                                             1.2, 0)
-            # hsv = np.zeros((84,84,3),dtype=np.uint8)
-            # hsv[..., 1] = 255
-            # flow = np.reshape(flow,(84,84,2))
-            # mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-            # hsv[..., 0] = ang * 180 / np.pi / 2
-            # hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
-            # bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-            # cv2.imwrite('frame2.jpg', bgr)
-            # cv2.imwrite('frame2_hsv.jpg', hsv)
-            # cv2.imwrite('frame_prev.jpg',np.reshape(prvs,(84,84,1)))
-            # cv2.imwrite('frame_nxt.jpg', np.reshape(next, (84, 84, 1)))
-            # #k = cv2.waitKey(0)
+
 
             flow_target.append(np.reshape(flow,newshape=(-1,2)))
 
         feed_dict_aux = {self.network.previous_observations_fl: frames,
+                         self.network.previous_observations_fl_next :
+                             frames_target,
                          self.network.fl_target: flow_target}
 
-        params = [self.network.fl_loss]
+        params = [self.network.fl_loss,
+                  self.network.previous_observations_fl,
+                  self.network.previous_observations_fl_next,
+                  self.network.fl_target,
+                  self.network.flow_prediction]
+
+        return [frames], params, feed_dict_aux
+
+    ''' Do not skew distribution
+                Sample BACKUP_STEP consecutive observations
+        '''
+
+    def get_auxiliary_tasks_input_vqvae_prediction(self, experience_replay,
+                                                   session):
+        k_frames = 0
+        index = np.random.randint(0,
+                                  len(experience_replay) - self.backup_step -
+                                  k_frames)
+        sequence = experience_replay[index: index + self.backup_step]
+        sequence_target = experience_replay[index + k_frames: index +
+                                                              self.backup_step + k_frames]
+        # observation = [frame, selected_action, reward, new_frame, value]
+        # Get frames
+        frames = [x[0] for x in sequence]
+        frames_target = [x[0] for x in sequence_target]
+
+        feed_dict_aux = {self.network.previous_observations_vqvae: frames,
+                         self.network.vqvae_target: frames_target}
+
+        params = [self.network.vqvae_loss, self.network.vqvae_indices_ids,
+                  self.network.vqvae_indices_ids_count,
+                  self.network.vqvae_target,
+                  self.network.vqvae_prediction]
 
         return [frames], params, feed_dict_aux
 
@@ -382,6 +473,20 @@ class Worker():
             input_data.extend(input_data_aux)
             params.extend(params_aux)
             feed_dict.update(feed_dict_aux)
+        if self.FLAGS.has_vqvae_prediction:
+            input_data_aux, params_aux, feed_dict_aux = \
+                self.get_auxiliary_tasks_input_vqvae_prediction(
+                    experience_replay, session)
+            input_data.extend(input_data_aux)
+            params.extend(params_aux)
+            feed_dict.update(feed_dict_aux)
+        if self.FLAGS.has_frame_prediction_thresholded:
+            input_data_aux, params_aux, feed_dict_aux = \
+                self.get_auxiliary_tasks_input_frame_prediction_thresholded(
+                    experience_replay, session)
+            input_data.extend(input_data_aux)
+            params.extend(params_aux)
+            feed_dict.update(feed_dict_aux)
 
         return input_data, params, feed_dict
 
@@ -451,8 +556,25 @@ class Worker():
         pixel_control_loss = None
         value_prediction_loss = None
         frame_prediction_loss = None
+        frame_reconstruction = None
+        frame_target = None
+
+        frame_threshold_prediction_loss = None
+        frame_threshold_orig_image = None
+        frame_threshold_target = None
+        frame_threshold_prediction = None
+
         action_prediction_loss = None
         flow_prediction_loss = None
+        flow_input = None
+        flow_input_next = None
+        flow_target = None
+        flow_prediction = None
+        vqvae_prediction_loss = None
+        vqvae_indices_ids = None
+        vqvae_indices_ids_count = None
+        vqvae_target = None
+        vqvae_prediction = None
 
         if self.FLAGS.has_reward_prediction:
             reward_prediction_loss = results[start_index] /len(rollout)
@@ -466,11 +588,44 @@ class Worker():
         if self.FLAGS.has_frame_prediction:
             frame_prediction_loss = results[start_index]/len(rollout)
             start_index += 1
+            frame_target = results[start_index]
+            start_index += 1
+            frame_reconstruction = results[start_index]
+            start_index += 1
         if self.FLAGS.has_action_prediction:
             action_prediction_loss = results[start_index]/len(rollout)
             start_index += 1
         if self.FLAGS.has_flow_prediction:
             flow_prediction_loss = results[start_index]/len(rollout)
+            start_index += 1
+            flow_input = results[start_index]
+            start_index += 1
+            flow_input_next = results[start_index]
+            start_index += 1
+            flow_target = results[start_index]
+            start_index += 1
+            flow_prediction = results[start_index]
+            start_index += 1
+        if self.FLAGS.has_vqvae_prediction:
+            vqvae_prediction_loss = results[start_index] / len(rollout)
+            start_index += 1
+            vqvae_indices_ids = results[start_index]
+            start_index += 1
+            vqvae_indices_ids_count = results[start_index]
+            start_index += 1
+            vqvae_target = results[start_index]
+            start_index += 1
+            vqvae_prediction = results[start_index]
+            start_index += 1
+        if self.FLAGS.has_frame_prediction_thresholded:
+            frame_threshold_prediction_loss = results[start_index]
+            start_index += 1
+            frame_threshold_orig_image = results[start_index]
+            start_index += 1
+            frame_threshold_target = results[start_index]
+            start_index += 1
+            frame_threshold_prediction = results[start_index]
+            start_index += 1
 
         #network loss
         total_loss = results[-1] /len(rollout)
@@ -479,8 +634,18 @@ class Worker():
         values_to_plot = [value_loss / len(rollout), policy_loss / len(rollout), entropy / len(rollout),
                                clipped_grad_norm, reward_prediction_loss,
                           pixel_control_loss, value_prediction_loss,
-                          frame_prediction_loss, action_prediction_loss,
-                          flow_prediction_loss,
+                          frame_prediction_loss, frame_target,
+                          frame_reconstruction,
+                          action_prediction_loss,
+                          flow_prediction_loss, flow_input, flow_input_next,
+                          flow_target,
+                          flow_prediction,
+                          vqvae_prediction_loss,
+                          vqvae_indices_ids, vqvae_indices_ids_count,
+                          vqvae_target, vqvae_prediction,
+                          frame_threshold_prediction_loss,
+                          frame_threshold_orig_image, frame_threshold_target,
+                          frame_threshold_prediction,
                           total_loss]
 
         return values_to_plot
@@ -496,7 +661,7 @@ class Worker():
         summary.value.add(tag='Performance/Mean value', simple_value=float(mean_value))
         self.summary_writer.add_summary(summary, episode_count)
         self.summary_writer.flush()
-        
+
     ''' Write a summary '''
 
     def write_summary(self, episode_count, total_frames, frames, losses, session, saver):
@@ -514,12 +679,20 @@ class Worker():
 
         #Extract losses
         [value_loss, policy_loss, entropy, clipped_grad_norm, rp_loss,
-         pc_loss, vp_loss, fp_loss, ap_loss, fl_loss, total_loss] = losses
+         pc_loss, vp_loss, fp_loss, fp_target, fp_recon, ap_loss, fl_loss,
+         fl_input, fl_input_next,
+         fl_target, fl_pred, vqvae_loss, vqvae_indices_ids,
+         vqvae_indices_ids_count, vqvae_target, vqvae_prediction,
+         fp_thresh_loss, fp_thresh_image, fp_thresh_target,
+         fp_thresh_prediction,
+         total_loss] = \
+            losses
 
         #Create gifs from frames
 
         if self.scope == 'thread_0':
-            if (episode_count <=10 and episode_count % 5 == 0) or episode_count % 25 == 0:
+            if (episode_count <=10 and episode_count % 5 == 0) or \
+                                    episode_count % 15 == 0:
                 images = np.array(frames)
                 time_per_step = 0.05
                 make_gif(images, self.frames_path+'/image' + str(episode_count) + '.avi',
@@ -528,13 +701,15 @@ class Worker():
                 #save visitation map
                 visitation_map= self.game.construct_visitation_map()
                 cv2.imwrite(
-                        self.frames_path+'/visitation_map_' +
-                                       str(episode_count) + '.png', visitation_map)
+                         self.frames_path+'/visitation_map_' +
+                                        str(episode_count) + '.png', visitation_map)
                 #exit(1)
 
         #Save model at each 250 episodes
         if episode_count % 25 == 0 and self.name == 'thread_0':
-            saver.save(session, self.model_path + '/model-' + str(episode_count) + '.cptk')
+            #saver.save(session, os.path.join(self.model_path, 'model.ckpt'), self.global_episodes)
+            path = self.base_path + "/train_" + str(self.index)
+            saver.save(session, os.path.join(path, 'model.ckpt'), self.global_episodes)
             print ("LOG: Saved Model")
 
         #Plot values
@@ -558,12 +733,127 @@ class Worker():
         if fp_loss != None:
             summary.value.add(tag='Losses/AuxLosses/Frame Prediction',
                               simple_value=float(fp_loss))
+
+            if self.scope == 'thread_0':
+                #normalize frame
+                fp_recon = fp_recon[0] * 255
+                fp_recon = np.reshape(fp_recon, (84,84))
+                fp_recon = np.array(fp_recon, dtype=np.uint8)
+                cv2.imwrite(os.path.join(self.frames_path,
+                                         str(self.scope)+'_fp_reconstruction_'
+                                         + str(
+                    episode_count) + '.jpg'),fp_recon)
+
+                fp_target = fp_target[0] * 255
+                fp_target = np.reshape(fp_target, (84, 84))
+                fp_target = np.array(fp_target, dtype=np.uint8)
+                cv2.imwrite(os.path.join(self.frames_path,
+                                         str(self.scope) + '_fp_target_' + str(
+                                             episode_count) + '.jpg'),
+                            fp_target)
+
         if ap_loss != None:
             summary.value.add(tag='Losses/AuxLosses/Action Prediction',
                                   simple_value=float(ap_loss))
         if fl_loss != None:
             summary.value.add(tag='Losses/AuxLosses/Flow Prediction',
                               simple_value=float(fl_loss))
+
+            if self.scope == 'thread_0':
+                #normalize frame
+                fl_pred = fl_pred[0]
+                fl_pred_rgb = self.convert_flow_to_bgr(fl_pred)
+                cv2.imwrite(os.path.join(self.frames_path,
+                                         str(self.scope)+'_flow_pred_' + str(
+                    episode_count) + '.jpg'),fl_pred_rgb)
+
+                fl_target = fl_target[0]
+                fl_target_rgb = self.convert_flow_to_bgr(fl_target)
+                cv2.imwrite(os.path.join(self.frames_path,
+                                         str(self.scope) + '_flow_target_' +
+                                         str(
+                                             episode_count) + '.jpg'),
+                            fl_target_rgb)
+
+                # normalize frame
+                fl_input = fl_input[0] * 255
+                fl_input = np.reshape(fl_input, (84, 84))
+                fl_input = np.array(fl_input, dtype=np.uint8)
+                cv2.imwrite(os.path.join(self.frames_path,
+                                         str(self.scope) +
+                                         '_fl_input_a_'
+                                         + str(
+                                             episode_count) + '.jpg'), fl_input)
+
+                # normalize frame
+                fl_input_next = fl_input_next[0] * 255
+                fl_input_next = np.reshape(fl_input_next, (84, 84))
+                fl_input_next = np.array(fl_input_next, dtype=np.uint8)
+                cv2.imwrite(os.path.join(self.frames_path,
+                                         str(self.scope) +
+                                         '_fl_input_b_'
+                                         + str(
+                                             episode_count) + '.jpg'), fl_input_next)
+
+        if vqvae_loss != None:
+            summary.value.add(tag='Losses/AuxLosses/VQVAE Prediction',
+                              simple_value=float(vqvae_loss))
+            for idx, id_name in enumerate(vqvae_indices_ids):
+                summary.value.add(tag='VQVAE/Indices/'+str(id_name),
+                                  simple_value=int(vqvae_indices_ids_count[idx]))
+
+            if self.scope == 'thread_0':
+                #normalize frame
+                vqvae_prediction = vqvae_prediction[0] * 255
+                vqvae_prediction = np.reshape(vqvae_prediction, (84,84))
+                vqvae_prediction = np.array(vqvae_prediction, dtype=np.uint8)
+                cv2.imwrite(os.path.join(self.frames_path,
+                                         str(self.scope)+
+                                         '_vqvae_reconstruction_'
+                                         + str(episode_count) + '.jpg'),
+                            vqvae_prediction)
+
+                vqvae_target = vqvae_target[0] * 255
+                vqvae_target = np.reshape(vqvae_target, (84, 84))
+                vqvae_target = np.array(vqvae_target, dtype=np.uint8)
+                cv2.imwrite(os.path.join(self.frames_path,
+                                         str(self.scope) + '_vqvae_target_' +
+                                         str(episode_count) + '.jpg'),
+                            vqvae_target)
+
+        if fp_thresh_loss != None:
+            summary.value.add(tag='Losses/AuxLosses/Frame Prediction '
+                                  'Thresholded',
+                              simple_value=float(fp_thresh_loss))
+
+            if self.scope == 'thread_0':
+                #normalize frame
+                fp_thresh_prediction = fp_thresh_prediction[0] * 255
+                fp_thresh_prediction = np.reshape(fp_thresh_prediction, (84,84))
+                fp_thresh_prediction = np.array(fp_thresh_prediction, dtype=np.uint8)
+                cv2.imwrite(os.path.join(self.frames_path,
+                                         str(
+                                             self.scope)+'_fp_thresh_prediction_'
+                                         + str(
+                    episode_count) + '.jpg'),fp_thresh_prediction)
+
+                fp_thresh_image = fp_thresh_image[0] * 255
+                fp_thresh_image = np.reshape(fp_thresh_image, (84, 84))
+                fp_thresh_image = np.array(fp_thresh_image, dtype=np.uint8)
+                cv2.imwrite(os.path.join(self.frames_path,
+                                         str(self.scope) + '_fp_thresh_image_' + str(
+                                             episode_count) + '.jpg'),
+                            fp_thresh_image)
+
+                fp_thresh_target = fp_thresh_target[0] * 255
+                fp_thresh_target = np.reshape(fp_thresh_target, (84, 84))
+                fp_thresh_target = np.array(fp_thresh_target, dtype=np.uint8)
+                cv2.imwrite(os.path.join(self.frames_path,
+                                         str(
+                                             self.scope) + '_fp_thresh_target_' + str(
+                                             episode_count) + '.jpg'),
+                            fp_thresh_target)
+
 
         self.summary_writer.add_summary(summary, episode_count)
         self.summary_writer.flush()
@@ -589,7 +879,9 @@ class Worker():
         episode_rewards_list = []
         episode_step_count = 0
         selected_action = 0
-        toplot = [0, 0, 0, 0, None, None, None, None, None, None, 0]
+        toplot = [0, 0, 0, 0, None, None, None, None, None, None, None, None,
+                  None, None, None, None, None, None,
+                  None, None, None, None, None, None, None, 0]
         # Clean slate for each episode
         self.game.restart_game()
         rnn_state = None
@@ -690,8 +982,7 @@ class Worker():
                 value_bootstrap = sess.run(self.network.value, feed_dict)[0]
 
                 toplot = self.back_it_up(episode_buffer, experience_replay, value_bootstrap, sess)
-                #[value_loss, policy_loss, entropy_loss, grad_norm, after_clip_grad_norm, var_norm] = toplot
-
+                
                 episode_buffer = []
                 #We sync to the master network
                 sess.run(self.sync_to_master)
@@ -786,8 +1077,9 @@ class Worker():
                     sess.run(self.increment)
                     global_ep = sess.run(self.global_episodes)
                     if global_ep == self.FLAGS.episodes:
-                        saver.save(sess, self.model_path + '/model-' + str(
-                            episode_count) + '.cptk')
+                        #saver.save(sess, os.path.join(self.model_path,'model.ckpt'), global_ep)
+                        path = self.base_path + "/train_" + str(self.index)
+                        saver.save(sess, os.path.join(path, 'model.ckpt'), self.global_episodes)
                         print ("LOG: Saved Model")
 
                         coord.request_stop()

@@ -190,26 +190,136 @@ class BaseNetwork:
             # Overall loss = 0.5 value_loss + policy_loss
             self.loss = 0.5 * self.value_loss + self.policy_loss - self.entropy*self.beta
 
+            self.main_loss = self.loss
+
             #Add auxiliary tasks loss
             self.init_auxiliary_tasks_loss(self.FLAGS)
 
             #GRADIENTS COMPUTATION
             #Compute variabels norm (just for plotting needs)
-            self.vari = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.scope)
+            if not self.FLAGS.has_vqvae_prediction:
+                self.vari = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.scope)
 
-            self.var_norm = tf.global_norm(self.vari)
+                self.var_norm = tf.global_norm(self.vari)
 
-            #Compute gradients of local network
-            self.gradients = tf.gradients(self.loss, self.vari)
-            #Compute and clip norm of gradients
-            self.grad_norm = tf.global_norm(self.gradients)
+                #Compute gradients of local network
+                self.gradients = tf.gradients(self.loss, self.vari)
+                #Compute and clip norm of gradients
+                self.grad_norm = tf.global_norm(self.gradients)
 
-            self.clipped_gradients, grad_norms = tf.clip_by_global_norm(self.gradients, 40)
-            self.clipped_grad_norm = tf.global_norm(self.clipped_gradients)
+                self.clipped_gradients, grad_norms = tf.clip_by_global_norm(self.gradients, 40)
+                self.clipped_grad_norm = tf.global_norm(self.clipped_gradients)
 
-            #Apply gradients to global network
-            self.global_vari = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.master_network.scope)
-            self.apply_grads = self.trainer.apply_gradients(zip(self.clipped_gradients, self.global_vari))
+                #Apply gradients to global network
+                self.global_vari = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.master_network.scope)
+                # self.apply_grads = self.trainer.apply_gradients(zip(self.clipped_gradients, self.global_vari))
+
+            else:
+                # decoder grads
+                decoder_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.scope+"/decoder")
+                decoder_grads = tf.gradients(self.vqvae_loss, decoder_vars)
+                decoder_grads_vars = list(zip(decoder_grads, decoder_vars))
+
+                # embedding variables grads
+                embed_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.scope+"/vq")
+                embed_grads = tf.gradients(self.vq, embed_vars)
+                embed_grads_vars = list(zip(embed_grads, embed_vars))
+
+                # encoder grads
+                encoder_vars = [x for x in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES) if x not in embed_vars and x not in decoder_vars and self.scope in x.name]
+                # TODO hardcoded for now
+                base_vars = [x for x in encoder_vars if 'decoder' not in x.name and 'vq' not in x.name]
+                encoder_vars = [x for x in encoder_vars if 'fc' not in x.name and 'policy' not in x.name and 'value' not in x.name and 'lstm' not in x.name]
+                grad_z = tf.gradients(self.recon, self.vqvae_reconstructed_cnn_output)
+                encoder_grads_vars = [(tf.gradients(self.vqvae_cnn_output, var,
+                                               grad_z)[0] + self.beta_vqvae *
+                                  tf.gradients(self.commit, var)[0], var)
+                                 for var in encoder_vars]
+
+                # also gradients for main a3c network loss
+                base_gradients = tf.gradients(self.main_loss, base_vars)
+                base_gradients_grads_vars = list(zip(base_gradients, base_vars))
+
+                # total grads
+                self.grads_vars = decoder_grads_vars + embed_grads_vars + encoder_grads_vars + base_gradients_grads_vars
+
+                self.gradients = [grad for grad,var in self.grads_vars]
+                self.vars = [var for grad,var in self.grads_vars]
+
+                # Compute and clip norm of gradients
+                self.grad_norm = tf.global_norm(self.gradients)
+
+                self.clipped_gradients, grad_norms = tf.clip_by_global_norm(self.gradients, 40)
+                self.clipped_grad_norm = tf.global_norm(self.clipped_gradients)
+
+                # Apply gradients to global network
+                # get tensor by name returns ref to dtype..
+                global_vari = [tf.get_default_graph().get_tensor_by_name(x.name.replace(self.scope,self.master_network.scope)) for x in self.vars]
+                global_vari_collection = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.master_network.scope)
+                # Shameless hardcoding
+                self.global_vari = []
+                for x in global_vari:
+                    for variable in global_vari_collection:
+                        if variable.name == x.name:
+                            self.global_vari.append(variable)
+
+                self.apply_grads = self.trainer.apply_gradients(zip(self.clipped_gradients, self.global_vari))
+
+
+                # # decoder grads
+                # decoder_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.scope+"/decoder")
+                # decoder_grads = tf.gradients(self.recon, decoder_vars)
+                # decoder_grads_vars = list(zip(decoder_grads, decoder_vars))
+                #
+                # # embedding variables grads
+                # embed_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.scope+"/vq")
+                # embed_grads = tf.gradients(self.recon + self.vq, embed_vars)
+                # embed_grads_vars = list(zip(embed_grads, embed_vars))
+                #
+                # # encoder grads
+                # encoder_vars = [x for x in tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES) if x not in embed_vars and x not in decoder_vars and self.scope in x.name]
+                # # TODO hardcoded for now
+                # base_vars = [x for x in encoder_vars if 'decoder' not in x.name and 'vq' not in x.name]
+                # encoder_vars = [x for x in encoder_vars if 'fc' not in x.name and 'policy' not in x.name and 'value' not in x.name and 'lstm' not in x.name]
+                # # also add conv
+                #
+                # transferred_grads = tf.gradients(self.recon, self.vqvae_reconstructed_cnn_output)
+                #
+                # encoder_grads_1 = [tf.gradients(self.vqvae_cnn_output, var, transferred_grads) for var in encoder_vars]
+                # encoder_grads_1 = [x[0] for x in encoder_grads_1 if x[0] is not None]
+                # encoder_grads_2 = [tf.gradients(self.commit, var) for var in encoder_vars]
+                # encoder_grads_2 = [x[0] for x in encoder_grads_2 if x[0] is not None]
+                # encoder_grads = encoder_grads_1 + encoder_grads_2
+                # encoder_grads_vars = list(zip(encoder_grads, encoder_vars))
+                #
+                # # also gradients for main a3c network loss
+                # base_gradients = tf.gradients(self.main_loss, base_vars)
+                # base_gradients_grads_vars = list(zip(base_gradients, base_vars))
+                #
+                # # total grads
+                # self.grads_vars = decoder_grads_vars + embed_grads_vars + encoder_grads_vars + base_gradients_grads_vars
+                #
+                # self.gradients = [grad for grad,var in self.grads_vars]
+                # self.vars = [var for grad,var in self.grads_vars]
+                #
+                # # Compute and clip norm of gradients
+                # self.grad_norm = tf.global_norm(self.gradients)
+                #
+                # self.clipped_gradients, grad_norms = tf.clip_by_global_norm(self.gradients, 40)
+                # self.clipped_grad_norm = tf.global_norm(self.clipped_gradients)
+                #
+                # # Apply gradients to global network
+                # # get tensor by name returns ref to dtype..
+                # global_vari = [tf.get_default_graph().get_tensor_by_name(x.name.replace(self.scope,self.master_network.scope)) for x in self.vars]
+                # global_vari_collection = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.master_network.scope)
+                # # Shameless hardcoding
+                # self.global_vari = []
+                # for x in global_vari:
+                #     for variable in global_vari_collection:
+                #         if variable.name == x.name:
+                #             self.global_vari.append(variable)
+                #
+                # self.apply_grads = self.trainer.apply_gradients(zip(self.clipped_gradients, self.global_vari))
 
 
     ''' Create desired auxiliary tasks that contribute to the overall loss '''
@@ -226,6 +336,10 @@ class BaseNetwork:
             self.init_aux_task_action_prediction()
         if FLAGS.has_flow_prediction :
             self.init_aux_task_flow_prediction()
+        if FLAGS.has_vqvae_prediction:
+            self.init_aux_task_vqvae_prediction()
+        if FLAGS.has_frame_prediction_thresholded:
+            self.init_aux_task_frame_prediction_thresholded()
 
     def init_auxiliary_tasks_loss(self, FLAGS):
         # Initialize loss and add to total loss
@@ -247,6 +361,12 @@ class BaseNetwork:
         if FLAGS.has_flow_prediction:
             self.init_aux_task_loss_flow_prediction()
             self.loss = self.loss + self.fl_loss
+        if FLAGS.has_vqvae_prediction:
+            self.init_aux_task_loss_vqvae_prediction()
+            self.loss = self.loss + self.vqvae_loss
+        if FLAGS.has_frame_prediction_thresholded:
+            self.init_aux_task_loss_frame_prediction_thresholded()
+            self.loss = self.loss + self.fp_thresh_loss
 
     ''' Reward prediction network
         Branches of the last conv layer into an 128 FC -> 3 FC -> Softmax'''
@@ -601,29 +721,29 @@ class A3CLSTM(BaseNetwork):
         # Reuse variable
         cnn_output = self.cnn_trunk(prev_obs_reshaped, reuse=True)
 
-        # We pass it through the FC layer
+        # # We pass it through the FC layer
         fc_output = self.fc_trunk(cnn_output, reuse=True)
         lstm_input = fc_output
-
+        # fc_output = self.fc_trunk(cnn_output, reuse=True)
         if self.FLAGS.concat_action_lstm:
-            # Concatenate actions so as to pass to LSTM
+        # lstm_input = fc_output
             lstm_input = tf.concat([fc_output, prev_act_reshaped], 1)
-
-        # As opposed to the reward prediction, we also reuse the LSTM
+        #
+        # if self.FLAGS.concat_action_lstm:
         sequence_length = tf.shape(prev_obs_reshaped)[:1]
-
-        # Initial state of the lstm should be 0?
-        # Reset lstm state
+        #     # Concatenate actions so as to pass to LSTM
+        #     lstm_input = tf.concat([fc_output, prev_act_reshaped], 1)
+        #
         zero_state = self.lstm.zero_state(1, tf.float32)
-
+        # # As opposed to the reward prediction, we also reuse the LSTM
         rnn_outputs, rnn_state = self.lstm_trunk(lstm_input, sequence_length, zero_state, reuse=True)
-
-        #channels = 256 + self.lstm_additional_field
+        # sequence_length = tf.shape(prev_obs_reshaped)[:1]
+        #
         channels = 256
         rnn_outputs = tf.reshape(rnn_outputs, [-1, channels])
 
         with tf.device(self.device), tf.variable_scope(self.scope) as scope:
-            # Map lstm output to 9x9x32 to reconstruct the cnn trunk output
+            # # Map lstm output to 9x9x32 to reconstruct the cnn trunk output
             shape = [channels, 9 * 9 * 32]
             W_fc_fp1, b_fc_fp1 = self.init_weights_and_biases("W_fc_fp1", shape)
             fc_fp = tf.nn.relu(tf.matmul(rnn_outputs, W_fc_fp1) + b_fc_fp1)
@@ -675,7 +795,109 @@ class A3CLSTM(BaseNetwork):
                                                 padding='VALID')
 
             # 84,84,1
-            self.fp_reconstruction = tf.nn.relu(fp_deconv2 + b_deconv_fp2)
+            self.fp_reconstruction = fp_deconv2 + b_deconv_fp2
+
+            # self.fp_reconstruction = tf.nn.relu(fp_deconv2 + b_deconv_fp2)
+
+    def init_aux_task_frame_prediction_thresholded(self):
+        with tf.device(self.device), tf.variable_scope(self.scope) as scope:
+            self.previous_observations_fp_thresh = tf.placeholder(
+                shape=[None, self.input_size * self.input_size,
+                       self.no_frames],
+                dtype=tf.float32, name='previous_observations_fp_thresh')
+
+            self.current_observations_fp_thresh = tf.placeholder(
+                shape=[None, self.input_size * self.input_size,
+                       self.no_frames],
+                dtype=tf.float32, name='current_observations_fp_thresh')
+
+            # Reshape to be a 4d tensor
+            prev_obs_reshaped = tf.reshape(self.previous_observations_fp_thresh,
+                                           shape=[-1, self.input_size, self.input_size, self.no_frames]
+                                           ,
+                                           name='previous_observations_fp_thresh_reshaped')
+
+        # We pass our frames through the CNN
+        # Reuse variable
+        cnn_output = self.cnn_trunk(prev_obs_reshaped, reuse=True)
+
+        # # We pass it through the FC layer
+        fc_output = self.fc_trunk(cnn_output, reuse=True)
+        lstm_input = fc_output
+        # fc_output = self.fc_trunk(cnn_output, reuse=True)
+
+
+        sequence_length = tf.shape(prev_obs_reshaped)[:1]
+
+        # Initial state of the lstm should be 0?
+        # Reset lstm state
+        zero_state = self.lstm.zero_state(1, tf.float32)
+
+        rnn_outputs, rnn_state = self.lstm_trunk(lstm_input, sequence_length, zero_state, reuse=True)
+
+        #channels = 256 + self.lstm_additional_field
+        channels = 256
+        rnn_outputs = tf.reshape(rnn_outputs, [-1, channels])
+
+        with tf.device(self.device), tf.variable_scope(self.scope) as scope:
+
+            shape = [channels, 9 * 9 * 32]
+            W_fc_fp1, b_fc_fp1 = self.init_weights_and_biases(
+                "W_fc_fp_thresh1", shape)
+            fc_fp = tf.nn.relu(tf.matmul(rnn_outputs, W_fc_fp1) + b_fc_fp1)
+            fc_fp = tf.reshape(fc_fp, [-1, 9, 9, 32])
+
+            # Deconv layer map to 20x20x16
+            shape = [4, 4, 16, 32]
+            W_deconv_fp1, b_deconv_fp1 = self.init_weights_and_biases(
+                "W_deconv_fp_thresh1", shape)
+
+            # TODO
+            padding_type = 'VALID'
+            if padding_type == 'VALID':
+                out_height = (fc_fp.shape[1].value - 1) * 2 + \
+                             W_deconv_fp1.get_shape()[0].value
+                out_width = (fc_fp.shape[2].value - 1) * 2 + \
+                            W_deconv_fp1.get_shape()[1].value
+                out_shape = [tf.shape(fc_fp)[0], out_height, out_width,
+                             W_deconv_fp1.get_shape()[
+                                 2].value]
+            fp_deconv1 = tf.nn.conv2d_transpose(fc_fp,
+                                                     filter=W_deconv_fp1,
+                                                     output_shape=out_shape,
+                                                     strides=[1, 2, 2, 1],
+                                                     padding='VALID')
+
+            # 20x20x16
+            fp_deconv1 = tf.nn.relu(fp_deconv1 + b_deconv_fp1)
+
+            # Deconv layer map to 84x84x1
+            shape = [8, 8, self.no_frames, 16]
+            W_deconv_fp2, b_deconv_fp2 = self.init_weights_and_biases(
+                "W_deconv_fp_thresh2", shape)
+
+            # TODO
+            padding_type = 'VALID'
+            if padding_type == 'VALID':
+                out_height = (out_height - 1) * 4 + \
+                             W_deconv_fp2.get_shape()[0].value
+                out_width = (out_width - 1) * 4 + \
+                            W_deconv_fp2.get_shape()[1].value
+                out_shape = [tf.shape(fp_deconv1)[0], out_height, out_width,
+                             W_deconv_fp2.get_shape()[
+                                 2].value]
+            fp_deconv2 = tf.nn.conv2d_transpose(fp_deconv1,
+                                                filter=W_deconv_fp2,
+                                                output_shape=out_shape,
+                                                strides=[1, 4, 4, 1],
+                                                padding='VALID')
+
+            # 84,84,1
+            self.fp_thresh_reconstruction = tf.nn.relu(fp_deconv2 + b_deconv_fp2)
+
+            # visualization
+            self.fp_thresh_reconstruction_vis = self.fp_thresh_reconstruction
+
 
     ''' Frame prediction network reuses the LSTM (with sampled experience)'''
 
@@ -693,6 +915,11 @@ class A3CLSTM(BaseNetwork):
                                                   self.no_frames]
                                            ,
                                            name='previous_observations_fl_reshaped')
+
+            self.previous_observations_fl_next = tf.placeholder(
+                shape=[None, self.input_size * self.input_size,
+                       self.no_frames],
+                dtype=tf.float32, name='previous_observations_fl_next')
 
         # We pass our frames through the CNN
         # Reuse variable
@@ -771,6 +998,105 @@ class A3CLSTM(BaseNetwork):
 
             # 84,84,2
             self.flow_prediction = tf.nn.relu(fp_deconv2 + b_deconv_fp2)
+
+    ''' Frame prediction network reuses the LSTM (with sampled experience)'''
+
+    def init_aux_task_vqvae_prediction(self):
+        with tf.device(self.device), tf.variable_scope(self.scope) as scope:
+            self.previous_observations_vqvae = tf.placeholder(
+                shape=[None, self.input_size * self.input_size,
+                       self.no_frames],
+                dtype=tf.float32, name='previous_observations_vqvae')
+
+            # Reshape to be a 4d tensor
+            prev_obs_reshaped = tf.reshape(self.previous_observations_vqvae,
+                                           shape=[-1, self.input_size,
+                                                  self.input_size,
+                                                  self.no_frames]
+                                           ,
+                                           name='previous_observations_vqvae_reshaped')
+
+        # We pass our frames through the CNN
+        # Reuse variable
+        self.vqvae_cnn_output = self.cnn_trunk(prev_obs_reshaped, reuse=True)
+        cnn_output = self.vqvae_cnn_output
+        with tf.device(self.device), tf.variable_scope(self.scope) as scope:
+            # VQ vector quantization
+            # slit cnn output into embeddings and embedding indices
+            with tf.variable_scope("vq"):
+                K = 512
+                D = 32
+                embeds = tf.get_variable('embed', [K, D],
+                                         initializer=tf.truncated_normal_initializer(stddev=0.01))
+
+                # reconstruct cnn output based on embeddings and embedding indices
+                self.embeds = embeds
+
+                # Nearest neighbour
+                vq_in = tf.expand_dims(cnn_output, axis=-2)
+                distances = tf.norm(vq_in - self.embeds, axis=-1)
+                k = tf.argmin(distances, axis=-1)  # -> [latent_h,latent_w]
+                self.vqvae_indices = k
+
+                if self.scope != 'global':
+                    # Visualize histogram of chosen indices (of embeddings)
+                    reshaped_indices = tf.reshape(self.vqvae_indices, [-1])
+                    self.vqvae_indices_ids,_, self.vqvae_indices_ids_count = tf.unique_with_counts(reshaped_indices)
+
+
+                reconstructed_cnn_output = tf.gather(self.embeds, k)
+                self.vqvae_reconstructed_cnn_output = reconstructed_cnn_output
+
+            with tf.variable_scope("decoder"):
+                # Deconv layer map to 20x20x16
+                shape = [4, 4, 16, 32]
+                W_deconv_fp1, b_deconv_fp1 = self.init_weights_and_biases(
+                    "W_deconv_fl1", shape)
+
+                # TODO
+                padding_type = 'VALID'
+                if padding_type == 'VALID':
+                    out_height = (reconstructed_cnn_output.shape[1].value - 1) * 2 + \
+                                 W_deconv_fp1.get_shape()[0].value
+                    out_width = (reconstructed_cnn_output.shape[2].value - 1) * 2 + \
+                                W_deconv_fp1.get_shape()[1].value
+                    out_shape = [tf.shape(reconstructed_cnn_output)[0], out_height, out_width,
+                                 W_deconv_fp1.get_shape()[
+                                     2].value]
+                fp_deconv1 = tf.nn.conv2d_transpose(reconstructed_cnn_output,
+                                                    filter=W_deconv_fp1,
+                                                    output_shape=out_shape,
+                                                    strides=[1, 2, 2, 1],
+                                                    padding='VALID')
+
+                # 20x20x16
+                fp_deconv1 = tf.nn.relu(fp_deconv1 + b_deconv_fp1)
+
+                # Deconv layer map to 84x84x2
+                # 1 is for grayscale image
+                shape = [8, 8, 1, 16]
+                W_deconv_fp2, b_deconv_fp2 = self.init_weights_and_biases(
+                    "W_deconv_fl2", shape)
+
+                # TODO
+                padding_type = 'VALID'
+                if padding_type == 'VALID':
+                    out_height = (out_height - 1) * 4 + \
+                                 W_deconv_fp2.get_shape()[0].value
+                    out_width = (out_width - 1) * 4 + \
+                                W_deconv_fp2.get_shape()[1].value
+                    out_shape = [tf.shape(fp_deconv1)[0], out_height, out_width,
+                                 W_deconv_fp2.get_shape()[
+                                     2].value]
+                fp_deconv2 = tf.nn.conv2d_transpose(fp_deconv1,
+                                                    filter=W_deconv_fp2,
+                                                    output_shape=out_shape,
+                                                    strides=[1, 4, 4, 1],
+                                                    padding='VALID')
+
+                # 84,84,1
+                self.vqvae_prediction = tf.nn.relu(fp_deconv2 + b_deconv_fp2)
+
 
     ''' Pixel control network reuses the LSTM and value prediction
             (with sampled experience)'''
@@ -916,6 +1242,27 @@ class A3CLSTM(BaseNetwork):
 
         self.fp_loss = fp_loss * self.FLAGS.fp_loss_lambda
 
+    def init_aux_task_loss_frame_prediction_thresholded(self):
+        self.fp_thresh_previous_frames_target = tf.placeholder(dtype=tf.float32,
+                                               shape=[None, self.input_size *
+                                                      self.input_size,
+                                                      self.no_frames])
+        fp_thresh_previous_frames_target_reshaped = tf.reshape(
+            self.fp_thresh_previous_frames_target,
+                                       shape=[-1, self.input_size,
+                                              self.input_size, self.no_frames]
+                                       ,
+                                       name='fp_thresh_previous_frames_target_reshaped')
+
+
+        # Log because the loss is very high
+        # fp_loss = tf.reduce_sum(np.square(self.q_target - q_value))
+        fp_thresh_loss = tf.reduce_sum(tf.nn.l2_loss(
+            fp_thresh_previous_frames_target_reshaped -
+                                              self.fp_thresh_reconstruction))
+
+        self.fp_thresh_loss = fp_thresh_loss * self.FLAGS.fp_thresh_loss_lambda
+
     def init_aux_task_loss_flow_prediction(self):
         self.fl_target = tf.placeholder(dtype=tf.float32,
                                                shape=[None, self.input_size *
@@ -927,12 +1274,44 @@ class A3CLSTM(BaseNetwork):
                                        ,name='fl_target_reshaped')
 
 
-        # Log because the loss is very high
-        # fp_loss = tf.reduce_sum(np.square(self.q_target - q_value))
-        # flow_loss = tf.reduce_sum(tf.nn.l2_loss(fl_target_reshaped -
-        #                                          self.flow_prediction))
-        flow_loss = tf.reduce_sum(tf.abs(fl_target_reshaped - self.flow_prediction))
+        # Gives 0 values
+        flow_loss = tf.reduce_sum(tf.nn.l2_loss(fl_target_reshaped -
+                                                 self.flow_prediction))
         self.fl_loss = flow_loss * self.FLAGS.fl_loss_lambda
+
+
+        # flow_loss = tf.reduce_sum(tf.abs(fl_target_reshaped - self.flow_prediction))
+        # self.fl_loss = flow_loss * self.FLAGS.fl_loss_lambda
+
+    def init_aux_task_loss_vqvae_prediction(self):
+        self.vqvae_target = tf.placeholder(dtype=tf.float32,
+                                               shape=[None, self.input_size *
+                                                      self.input_size,
+                                                      self.no_frames])
+        vqvae_target_reshaped = tf.reshape(self.vqvae_target,
+                                       shape=[-1, self.input_size,
+                                              self.input_size, self.no_frames]
+                                       ,
+                                       name='vqvae_target_target_reshaped')
+
+        # vqvae_reconstruction_loss = tf.reduce_sum(tf.nn.l2_loss(vqvae_target_reshaped -
+        #                                       self.vqvae_prediction))
+
+
+        self.recon = tf.reduce_mean((self.vqvae_prediction - vqvae_target_reshaped) ** 2, axis=[0, 1, 2, 3])
+        self.vq = tf.reduce_mean(
+            tf.norm(tf.stop_gradient(self.vqvae_cnn_output) - self.vqvae_reconstructed_cnn_output, axis=-1) ** 2,
+            axis=[0, 1, 2])
+        self.commit = tf.reduce_mean(
+            tf.norm(self.vqvae_cnn_output - tf.stop_gradient(self.vqvae_reconstructed_cnn_output), axis=-1) ** 2,
+            axis=[0, 1, 2])
+
+        self.beta_vqvae = 0.25
+
+        self.vqvae_loss = self.recon + self.vq + self.beta_vqvae * self.commit
+
+        self.vqvae_loss = self.vqvae_loss * self.FLAGS.vqvae_loss_lambda
+
 
 
     ''' Pixel control loss '''
